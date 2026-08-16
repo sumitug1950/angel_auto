@@ -136,6 +136,30 @@ class InstrumentMaster:
                 return expiry
         raise LookupError(f"No future expiry found for {name}")
 
+    def monthly_expiries(self, name: str) -> list[str]:
+        """The scrip master doesn't tag weekly vs monthly - derive it: the monthly contract
+        is the *last* listed expiry in each calendar month (true regardless of which weekday
+        NSE currently uses for weekly expiry, which has changed more than once)."""
+        self._ensure_loaded()
+        by_month: dict[tuple[int, int], str] = {}
+        for expiry in self.available_expiries(name):
+            d = datetime.strptime(expiry, "%d%b%Y").date()
+            key = (d.year, d.month)
+            if key not in by_month or d > datetime.strptime(by_month[key], "%d%b%Y").date():
+                by_month[key] = expiry
+        return sorted(by_month.values(), key=lambda e: datetime.strptime(e, "%d%b%Y"))
+
+    def select_monthly_expiry(self, name: str, min_days_gap: int, as_of: date | None = None) -> str:
+        """The flagship strategy's expiry rule: trade the monthly contract, but only if at
+        least `min_days_gap` days remain. If the nearest monthly expiry is closer than that,
+        roll forward to the next monthly expiry instead."""
+        as_of = as_of or date.today()
+        for expiry in self.monthly_expiries(name):
+            days_remaining = (datetime.strptime(expiry, "%d%b%Y").date() - as_of).days
+            if days_remaining >= min_days_gap:
+                return expiry
+        raise LookupError(f"No monthly expiry for {name} with at least {min_days_gap} days remaining")
+
     def find_option(
         self, name: str, expiry: str, strike: float, option_type: Literal["CE", "PE"]
     ) -> Instrument | None:

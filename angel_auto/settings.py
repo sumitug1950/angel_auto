@@ -117,6 +117,11 @@ class StrikesConfig(BaseModel):
     otm_delta_target: float = Field(0.1, gt=0, lt=1)
 
 
+class ExpiryConfig(BaseModel):
+    type: Literal["MONTHLY", "WEEKLY"] = "MONTHLY"
+    min_days_gap: int = 10
+
+
 class SizingConfig(BaseModel):
     lots: int = 1
 
@@ -139,6 +144,7 @@ class StrategyConfig(BaseModel):
     pending_request: PendingRequestConfig = PendingRequestConfig()
     structure: StructureConfig = StructureConfig()
     strikes: StrikesConfig = StrikesConfig()
+    expiry: ExpiryConfig = ExpiryConfig()
     sizing: SizingConfig = SizingConfig()
     exit: ExitConfig = ExitConfig()
 

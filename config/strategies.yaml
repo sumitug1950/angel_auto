@@ -22,6 +22,10 @@ strategies:
       iv_rank_lookback_days: 90
       iv_source: INDIA_VIX
 
+    expiry:
+      type: MONTHLY             # not weekly - the last listed expiry in each calendar month
+      min_days_gap: 10          # if the nearest monthly expiry is closer than this, roll to the next one
+
     strikes:
       itm_delta_target: 0.7
       otm_delta_target: 0.1

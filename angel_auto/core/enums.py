@@ -26,6 +26,7 @@ class Direction(str, Enum):
 class StructureType(str, Enum):
     DEBIT = "DEBIT"
     CREDIT = "CREDIT"
+    SINGLE_LEG = "SINGLE_LEG"  # the two automatic zero-cross strategies (ATM sell / ITM-offset buy)
 
 
 class OptionType(str, Enum):
@@ -66,6 +67,7 @@ class ExitReason(str, Enum):
     FIXED_SL = "FIXED_SL"
     TRAILING_STOP = "TRAILING_STOP"
     OPPOSITE_MACD = "OPPOSITE_MACD"
+    OPPOSITE_ZERO_CROSS = "OPPOSITE_ZERO_CROSS"  # tick-driven zero-cross strategies' exit
     MANUAL_EXIT = "MANUAL_EXIT"
     KILL_SWITCH = "KILL_SWITCH"
     SQUARE_OFF = "SQUARE_OFF"

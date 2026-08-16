@@ -6,6 +6,7 @@ inputs - nothing here makes trading decisions, it only keeps market data current
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from datetime import datetime, timezone
 
 from angel_auto.data.instruments import InstrumentMaster
@@ -24,13 +25,22 @@ class LiveFeedRouter:
         bar_aggregator: BarAggregator,
         option_chain: OptionChainSnapshot,
         vix_token: str | None = None,
+        tick_recorder=None,  # data.tick_recorder.TickRecorder | None - avoids a circular import
     ) -> None:
         self.spot_token = spot_token
         self.vix_token = vix_token
         self.bars = bar_aggregator
         self.option_chain = option_chain
+        self.tick_recorder = tick_recorder
         self._latest_spot: float = 0.0
         self._latest_vix: float = 0.0
+        self._spot_tick_listeners: list[Callable[[float], None]] = []
+
+    def add_spot_tick_listener(self, listener: Callable[[float], None]) -> None:
+        """Registered by the tick-driven zero-cross strategies (core/app.py) - called with
+        the raw spot LTP on every spot tick, in addition to the candle-based BarAggregator
+        the flagship strategy reads."""
+        self._spot_tick_listeners.append(listener)
 
     def on_tick(self, tick: dict) -> None:
         token = str(tick.get("token", ""))
@@ -44,10 +54,23 @@ class LiveFeedRouter:
         if token == self.spot_token:
             self._latest_spot = ltp
             self.bars.add_tick(ltp, datetime.now(timezone.utc))
+            self._record_tick(token, "SPOT", None, ltp)
+            for listener in self._spot_tick_listeners:
+                try:
+                    listener(ltp)
+                except Exception:
+                    log.exception("spot_tick_listener_failed")
         elif token == self.vix_token:
             self._latest_vix = ltp
+            self._record_tick(token, "VIX", None, ltp)
         else:
             self.option_chain.update_ltp(token, ltp)
+            quote = self.option_chain.get(token)
+            self._record_tick(token, "OPTION", quote.trading_symbol if quote else None, ltp)
+
+    def _record_tick(self, token: str, tick_type: str, trading_symbol: str | None, ltp: float) -> None:
+        if self.tick_recorder is not None:
+            self.tick_recorder.record(token, tick_type, trading_symbol, ltp)
 
     @property
     def latest_spot(self) -> float:

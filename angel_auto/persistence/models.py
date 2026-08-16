@@ -60,13 +60,16 @@ class StrategyPreference(Base):
 
 
 class DailyRiskState(Base):
-    """One row per trading day - the running counters risk/circuit_breaker.py and
-    risk/pretrade.py check before allowing any new entry."""
+    """One row per (trading day, strategy) - the running counters risk/circuit_breaker.py
+    and risk/pretrade.py check before allowing any new entry. Scoped by strategy_name so
+    each running strategy gets its own independent daily loss-limit/consecutive-loss/trade
+    counters - a halt on one strategy must never block another."""
 
     __tablename__ = "daily_risk_state"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    trade_date: Mapped[date] = mapped_column(Date, unique=True, index=True)
+    trade_date: Mapped[date] = mapped_column(Date, index=True)
+    strategy_name: Mapped[str] = mapped_column(String(50), index=True, default="macd_itm_otm_spread")
     trades_taken: Mapped[int] = mapped_column(Integer, default=0)
     realized_pnl_rs: Mapped[float] = mapped_column(Float, default=0.0)
     consecutive_losses: Mapped[int] = mapped_column(Integer, default=0)
@@ -99,6 +102,7 @@ class Position(Base):
     __tablename__ = "positions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    strategy_name: Mapped[str] = mapped_column(String(50), index=True, default="macd_itm_otm_spread")
     direction_request_id: Mapped[int | None] = mapped_column(ForeignKey("direction_requests.id"), nullable=True)
     direction: Mapped[Direction] = mapped_column(SAEnum(Direction))
     structure_type: Mapped[StructureType] = mapped_column(SAEnum(StructureType))
@@ -111,6 +115,8 @@ class Position(Base):
 
     entry_net_premium_rs: Mapped[float | None] = mapped_column(Float, nullable=True)
     realized_pnl_rs: Mapped[float | None] = mapped_column(Float, nullable=True)
+    charges_rs: Mapped[float] = mapped_column(Float, default=0.0)  # estimated brokerage + statutory charges
+    net_pnl_rs: Mapped[float | None] = mapped_column(Float, nullable=True)  # realized_pnl_rs - charges_rs
     peak_profit_rs: Mapped[float] = mapped_column(Float, default=0.0)  # high-water mark for trailing stop
     trail_active: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -180,3 +186,20 @@ class EquityCurve(Base):
     realized_pnl_rs: Mapped[float] = mapped_column(Float)
     unrealized_pnl_rs: Mapped[float] = mapped_column(Float)
     total_equity_rs: Mapped[float] = mapped_column(Float)
+
+
+class TickRecord(Base):
+    """Raw live tick archive - spot, VIX, and every subscribed option tick - recorded now so
+    a future replay-backtest can use real captured prices instead of synthetic ones (Angel
+    One doesn't reliably provide historical intraday/tick data). Buffered in memory and
+    flushed in batches by data/tick_recorder.py - never written synchronously on the tick
+    path."""
+
+    __tablename__ = "tick_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    token: Mapped[str] = mapped_column(String(20), index=True)
+    tick_type: Mapped[str] = mapped_column(String(10))  # "SPOT" | "VIX" | "OPTION"
+    trading_symbol: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    ltp: Mapped[float] = mapped_column(Float)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, index=True)

@@ -218,3 +218,38 @@ class InstrumentMaster:
         for monthly contracts). Near ATM the master often also lists a denser 50-point grid -
         this filters those out so strike selection only ever considers the coarser grid."""
         return [s for s in self.strikes_for_expiry(name, expiry) if s % grid == 0]
+
+    def atm_strike(self, name: str, expiry: str, spot: float, grid: float = 50.0) -> float:
+        """Nearest on-grid strike to spot - the real Nifty 50-point grid by default (not the
+        flagship spread strategy's coarser 100-pt grid). On an exact tie (spot equidistant
+        from two strikes), resolves to the LOWER strike, deterministically."""
+        strikes = self.strikes_on_grid(name, expiry, grid)
+        if not strikes:
+            raise LookupError(f"no strikes on {grid}-pt grid for {name} {expiry}")
+        return min(strikes, key=lambda s: (abs(s - spot), s))
+
+    def itm_offset_strike(
+        self,
+        name: str,
+        expiry: str,
+        spot: float,
+        option_type: Literal["CE", "PE"],
+        offset_count: int,
+        grid: float = 50.0,
+    ) -> float:
+        """The strike `offset_count` steps from ATM in the ITM direction on the real grid -
+        BELOW spot for a CALL (lower strikes are more in-the-money for calls), ABOVE spot
+        for a PUT. `offset_count=0` is equivalent to atm_strike(). Raises LookupError if the
+        option chain doesn't extend that far in either direction."""
+        strikes = self.strikes_on_grid(name, expiry, grid)
+        if not strikes:
+            raise LookupError(f"no strikes on {grid}-pt grid for {name} {expiry}")
+        atm = min(strikes, key=lambda s: (abs(s - spot), s))
+        atm_index = strikes.index(atm)
+        step = -offset_count if option_type == "CE" else offset_count
+        target_index = atm_index + step
+        if target_index < 0 or target_index >= len(strikes):
+            raise LookupError(
+                f"ITM{offset_count} {option_type} strike out of range for {name} {expiry} (grid={grid})"
+            )
+        return strikes[target_index]

@@ -93,3 +93,62 @@ def test_strikes_on_grid_filters_out_denser_near_atm_strikes():
     assert on_grid == [23900.0, 24000.0, 24100.0, 24200.0, 24300.0]
     assert 24050.0 not in on_grid
     assert 24150.0 not in on_grid
+
+
+def _fake_master_50pt_grid(expiry: str = "18AUG2026") -> InstrumentMaster:
+    strikes = [24500.0 + i * 50 for i in range(-10, 11)]  # 24000 .. 25000
+    return _fake_master_with_strikes(expiry, strikes)
+
+
+def test_atm_strike_exact_match():
+    master = _fake_master_50pt_grid()
+    assert master.atm_strike("NIFTY", "18AUG2026", spot=24650.0, grid=50.0) == 24650.0
+
+
+def test_atm_strike_rounds_to_nearest():
+    master = _fake_master_50pt_grid()
+    assert master.atm_strike("NIFTY", "18AUG2026", spot=24638.0, grid=50.0) == 24650.0
+    assert master.atm_strike("NIFTY", "18AUG2026", spot=24612.0, grid=50.0) == 24600.0
+
+
+def test_atm_strike_exact_tie_resolves_to_lower_strike():
+    master = _fake_master_50pt_grid()
+    # 24625 is exactly between 24600 and 24650
+    assert master.atm_strike("NIFTY", "18AUG2026", spot=24625.0, grid=50.0) == 24600.0
+
+
+def test_atm_strike_raises_when_no_strikes_on_grid():
+    master = _fake_master_with_strikes("18AUG2026", [24050.0, 24150.0])  # nothing on a 100-pt grid
+    try:
+        master.atm_strike("NIFTY", "18AUG2026", spot=24100.0, grid=100.0)
+        assert False, "expected LookupError"
+    except LookupError:
+        pass
+
+
+def test_itm_offset_strike_call_is_below_spot():
+    master = _fake_master_50pt_grid()
+    # ATM = 24650; CE ITM4 should be 4 strikes below = 24450
+    assert master.itm_offset_strike("NIFTY", "18AUG2026", spot=24650.0, option_type="CE", offset_count=4, grid=50.0) == 24450.0
+
+
+def test_itm_offset_strike_put_is_above_spot():
+    master = _fake_master_50pt_grid()
+    # ATM = 24650; PE ITM4 should be 4 strikes above = 24850
+    assert master.itm_offset_strike("NIFTY", "18AUG2026", spot=24650.0, option_type="PE", offset_count=4, grid=50.0) == 24850.0
+
+
+def test_itm_offset_strike_zero_offset_equals_atm():
+    master = _fake_master_50pt_grid()
+    atm = master.atm_strike("NIFTY", "18AUG2026", spot=24650.0, grid=50.0)
+    itm0 = master.itm_offset_strike("NIFTY", "18AUG2026", spot=24650.0, option_type="CE", offset_count=0, grid=50.0)
+    assert itm0 == atm
+
+
+def test_itm_offset_strike_raises_when_out_of_range():
+    master = _fake_master_50pt_grid()  # only 10 strikes below ATM
+    try:
+        master.itm_offset_strike("NIFTY", "18AUG2026", spot=24650.0, option_type="CE", offset_count=50, grid=50.0)
+        assert False, "expected LookupError"
+    except LookupError:
+        pass

@@ -119,6 +119,12 @@ table td, table th { padding: 0.35rem 0.4rem; border-bottom: 1px solid var(--bor
 .pos { color: var(--green); }
 .neg { color: var(--red); }
 
+.card-wide { grid-column: 1 / -1; }
+.chart-box { width: 100%; height: 300px; }
+.chart-box-small { height: 150px; margin-top: 0.5rem; }
+.table-scroll { overflow-x: auto; }
+.strategy-summary { font-size: 0.82rem; color: var(--muted); margin: 0.4rem 0; }
+
 #log-view {
   background: #0a0b0e;
   border: 1px solid var(--border);

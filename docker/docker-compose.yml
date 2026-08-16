@@ -9,6 +9,15 @@ services:
       - "8000:8000"
     env_file:
       - ../config/.env   # create this from config/.env.example first - real credentials, gitignored
+    environment:
+      # Pass-through only - no value set here on purpose. mode: live in config.yaml is not
+      # enough on its own (see core/app.py); this must also be exported by hand in the SSH
+      # session right before `docker compose up -d`, e.g.:
+      #   export ANGEL_LIVE_TRADING_CONFIRMED=YES_I_UNDERSTAND_THE_RISK
+      #   docker compose up -d
+      # Never put the real value in config/.env or any committed file - the whole point is
+      # that going live takes a deliberate action each time, not a saved setting.
+      - ANGEL_LIVE_TRADING_CONFIRMED
     volumes:
       - ../config/config.yaml:/app/config/config.yaml:ro
       - ../config/strategies.yaml:/app/config/strategies.yaml:ro

@@ -17,31 +17,38 @@ from angel_auto.persistence import journal
 log = get_logger(__name__)
 
 
+DEFAULT_STRATEGY_NAME = "macd_itm_otm_spread"
+
+
 def evaluate_after_trade_close(
-    daily_loss_limit_rs: float, max_consecutive_losses: int, trade_date: date | None = None
+    daily_loss_limit_rs: float,
+    max_consecutive_losses: int,
+    trade_date: date | None = None,
+    strategy_name: str = DEFAULT_STRATEGY_NAME,
 ) -> None:
     """Idempotent - safe to call after every trade close. No-ops if already halted.
+    Scoped per strategy_name - a halt on one strategy never affects another's counters.
 
     `trade_date` defaults to real today; the backtest engine passes its simulated day so
     this scopes to the day being replayed, not the wall-clock date the backtest runs on."""
-    state = journal.get_or_create_daily_state(trade_date)
+    state = journal.get_or_create_daily_state(trade_date, strategy_name=strategy_name)
     if state["trading_halted"]:
         return
 
     if state["realized_pnl_rs"] <= -abs(daily_loss_limit_rs):
         reason = f"daily loss limit hit: realized {state['realized_pnl_rs']:.2f} <= -{abs(daily_loss_limit_rs):.2f}"
-        journal.set_trading_halt(reason, trade_date)
-        log.warning("circuit_breaker_daily_loss_limit", realized_pnl_rs=state["realized_pnl_rs"])
+        journal.set_trading_halt(reason, trade_date, strategy_name=strategy_name)
+        log.warning("circuit_breaker_daily_loss_limit", strategy=strategy_name, realized_pnl_rs=state["realized_pnl_rs"])
         return
 
     if state["consecutive_losses"] >= max_consecutive_losses:
         reason = f"max consecutive losses hit: {state['consecutive_losses']} >= {max_consecutive_losses}"
-        journal.set_trading_halt(reason, trade_date)
-        log.warning("circuit_breaker_consecutive_losses", consecutive_losses=state["consecutive_losses"])
+        journal.set_trading_halt(reason, trade_date, strategy_name=strategy_name)
+        log.warning("circuit_breaker_consecutive_losses", strategy=strategy_name, consecutive_losses=state["consecutive_losses"])
 
 
-def trigger_kill_switch(reason: str = "manual kill-switch") -> None:
+def trigger_kill_switch(reason: str = "manual kill-switch", strategy_name: str = DEFAULT_STRATEGY_NAME) -> None:
     """Dashboard kill-switch button. Halts new entries immediately; the caller is still
     responsible for also force-exiting any open position (strategy.manual_exit())."""
-    journal.set_trading_halt(reason)
-    log.warning("kill_switch_triggered", reason=reason)
+    journal.set_trading_halt(reason, strategy_name=strategy_name)
+    log.warning("kill_switch_triggered", strategy=strategy_name, reason=reason)

@@ -46,3 +46,14 @@ logging:
 dashboard:
   host: "0.0.0.0"
   port: 8000
+
+charges:
+  brokerage_per_order_rs: 40.0   # confirmed rate: 1 lot (65 qty) = Rs 40 per order (buy or sell)
+  stt_sell_pct: 0.1
+  exchange_txn_pct: 0.03503
+  gst_pct: 18.0
+  sebi_charges_pct: 0.0001
+  stamp_duty_buy_pct: 0.003
+
+tick_recorder:
+  enabled: true

@@ -28,7 +28,10 @@ from angel_auto.persistence.models import (
     Order,
     Position,
     StrategyPreference,
+    TickRecord,
 )
+
+DEFAULT_STRATEGY_NAME = "macd_itm_otm_spread"
 
 
 def _utcnow() -> datetime:
@@ -95,37 +98,45 @@ def get_structure_preference(default: StructureType = StructureType.DEBIT) -> St
 # --- Daily risk state (max_trades_per_day, daily_loss_limit_rs, kill state) ----
 
 
-def get_or_create_daily_state(trade_date: date | None = None) -> dict:
+def get_or_create_daily_state(trade_date: date | None = None, strategy_name: str = DEFAULT_STRATEGY_NAME) -> dict:
     trade_date = trade_date or date.today()
     with session_scope() as session:
-        state = session.scalar(select(DailyRiskState).where(DailyRiskState.trade_date == trade_date))
+        state = session.scalar(
+            select(DailyRiskState).where(DailyRiskState.trade_date == trade_date, DailyRiskState.strategy_name == strategy_name)
+        )
         if state is None:
-            state = DailyRiskState(trade_date=trade_date)
+            state = DailyRiskState(trade_date=trade_date, strategy_name=strategy_name)
             session.add(state)
             session.flush()
         return _daily_state_to_dict(state)
 
 
-def increment_daily_trade_count(trade_date: date | None = None) -> int:
+def increment_daily_trade_count(trade_date: date | None = None, strategy_name: str = DEFAULT_STRATEGY_NAME) -> int:
     trade_date = trade_date or date.today()
     with session_scope() as session:
-        state = session.scalar(select(DailyRiskState).where(DailyRiskState.trade_date == trade_date))
+        state = session.scalar(
+            select(DailyRiskState).where(DailyRiskState.trade_date == trade_date, DailyRiskState.strategy_name == strategy_name)
+        )
         if state is None:
-            state = DailyRiskState(trade_date=trade_date)
+            state = DailyRiskState(trade_date=trade_date, strategy_name=strategy_name)
             session.add(state)
             session.flush()
         state.trades_taken += 1
         return state.trades_taken
 
 
-def record_trade_pnl(realized_pnl_delta_rs: float, trade_date: date | None = None) -> dict:
+def record_trade_pnl(
+    realized_pnl_delta_rs: float, trade_date: date | None = None, strategy_name: str = DEFAULT_STRATEGY_NAME
+) -> dict:
     """Apply a closed trade's P&L to the daily counters. Updates consecutive_losses too
     (resets to 0 on a win, increments on a loss) - circuit_breaker.py reads this."""
     trade_date = trade_date or date.today()
     with session_scope() as session:
-        state = session.scalar(select(DailyRiskState).where(DailyRiskState.trade_date == trade_date))
+        state = session.scalar(
+            select(DailyRiskState).where(DailyRiskState.trade_date == trade_date, DailyRiskState.strategy_name == strategy_name)
+        )
         if state is None:
-            state = DailyRiskState(trade_date=trade_date)
+            state = DailyRiskState(trade_date=trade_date, strategy_name=strategy_name)
             session.add(state)
             session.flush()
         state.realized_pnl_rs += realized_pnl_delta_rs
@@ -134,12 +145,14 @@ def record_trade_pnl(realized_pnl_delta_rs: float, trade_date: date | None = Non
         return _daily_state_to_dict(state)
 
 
-def set_trading_halt(reason: str, trade_date: date | None = None) -> None:
+def set_trading_halt(reason: str, trade_date: date | None = None, strategy_name: str = DEFAULT_STRATEGY_NAME) -> None:
     trade_date = trade_date or date.today()
     with session_scope() as session:
-        state = session.scalar(select(DailyRiskState).where(DailyRiskState.trade_date == trade_date))
+        state = session.scalar(
+            select(DailyRiskState).where(DailyRiskState.trade_date == trade_date, DailyRiskState.strategy_name == strategy_name)
+        )
         if state is None:
-            state = DailyRiskState(trade_date=trade_date)
+            state = DailyRiskState(trade_date=trade_date, strategy_name=strategy_name)
             session.add(state)
         state.trading_halted = True
         state.halt_reason = reason
@@ -148,6 +161,7 @@ def set_trading_halt(reason: str, trade_date: date | None = None) -> None:
 def _daily_state_to_dict(state: DailyRiskState) -> dict:
     return {
         "trade_date": state.trade_date,
+        "strategy_name": state.strategy_name,
         "trades_taken": state.trades_taken,
         "realized_pnl_rs": state.realized_pnl_rs,
         "consecutive_losses": state.consecutive_losses,
@@ -205,9 +219,11 @@ def create_position(
     expiry: str,
     direction_request_id: int | None = None,
     iv_rank_at_entry: float | None = None,
+    strategy_name: str = DEFAULT_STRATEGY_NAME,
 ) -> int:
     with session_scope() as session:
         position = Position(
+            strategy_name=strategy_name,
             direction_request_id=direction_request_id,
             direction=direction,
             structure_type=structure_type,
@@ -325,7 +341,12 @@ def update_trailing_peak(position_id: int, peak_profit_rs: float, trail_active: 
 
 
 def close_position(
-    position_id: int, exit_reason: ExitReason, realized_pnl_rs: float, trade_date: date | None = None
+    position_id: int,
+    exit_reason: ExitReason,
+    realized_pnl_rs: float,
+    trade_date: date | None = None,
+    strategy_name: str = DEFAULT_STRATEGY_NAME,
+    charges_rs: float = 0.0,
 ) -> None:
     with session_scope() as session:
         position = session.get(Position, position_id)
@@ -335,14 +356,19 @@ def close_position(
         position.exit_time = _utcnow()
         position.exit_reason = exit_reason
         position.realized_pnl_rs = realized_pnl_rs
-    record_trade_pnl(realized_pnl_rs, trade_date)
+        position.charges_rs = charges_rs
+        position.net_pnl_rs = realized_pnl_rs - charges_rs
+    record_trade_pnl(realized_pnl_rs, trade_date, strategy_name=strategy_name)
 
 
-def get_open_position() -> dict | None:
-    """At most one open position at a time (max_concurrent_positions=1)."""
+def get_open_position(strategy_name: str = DEFAULT_STRATEGY_NAME) -> dict | None:
+    """At most one open position at a time per strategy (max_concurrent_positions=1)."""
     with session_scope() as session:
         position = session.scalar(
-            select(Position).where(Position.status.in_([PositionStatus.OPENING, PositionStatus.OPEN]))
+            select(Position).where(
+                Position.status.in_([PositionStatus.OPENING, PositionStatus.OPEN]),
+                Position.strategy_name == strategy_name,
+            )
         )
         if position is None:
             return None
@@ -362,6 +388,7 @@ def get_open_position() -> dict | None:
         ]
         return {
             "id": position.id,
+            "strategy_name": position.strategy_name,
             "direction": position.direction,
             "structure_type": position.structure_type,
             "status": position.status,
@@ -373,18 +400,20 @@ def get_open_position() -> dict | None:
         }
 
 
-def list_recent_positions(limit: int = 50) -> list[dict]:
-    """Closed positions, most recent first - the dashboard trade log."""
+def list_recent_positions(limit: int = 50, strategy_name: str | None = None) -> list[dict]:
+    """Closed positions, most recent first - the dashboard trade log. `strategy_name=None`
+    (default) returns every strategy's trades; pass one to filter to a single strategy's
+    own record (e.g. the ATM Sell vs ITM4 Buy trade panels)."""
     with session_scope() as session:
-        positions = session.scalars(
-            select(Position)
-            .where(Position.status == PositionStatus.CLOSED)
-            .order_by(Position.exit_time.desc())
-            .limit(limit)
-        ).all()
+        stmt = select(Position).where(Position.status == PositionStatus.CLOSED)
+        if strategy_name is not None:
+            stmt = stmt.where(Position.strategy_name == strategy_name)
+        stmt = stmt.order_by(Position.exit_time.desc()).limit(limit)
+        positions = session.scalars(stmt).all()
         return [
             {
                 "id": p.id,
+                "strategy_name": p.strategy_name,
                 "direction": p.direction,
                 "structure_type": p.structure_type,
                 "expiry": p.expiry,
@@ -392,14 +421,46 @@ def list_recent_positions(limit: int = 50) -> list[dict]:
                 "exit_time": p.exit_time,
                 "exit_reason": p.exit_reason,
                 "realized_pnl_rs": p.realized_pnl_rs,
+                "charges_rs": p.charges_rs,
+                "net_pnl_rs": p.net_pnl_rs,
                 "iv_rank_at_entry": p.iv_rank_at_entry,
                 "legs": [
-                    {"role": leg.role, "strike": leg.strike, "option_type": leg.option_type, "side": leg.side}
+                    {
+                        "role": leg.role,
+                        "strike": leg.strike,
+                        "option_type": leg.option_type,
+                        "side": leg.side,
+                        "entry_price": leg.entry_price,
+                        "exit_price": leg.exit_price,
+                    }
                     for leg in p.legs
                 ],
             }
             for p in positions
         ]
+
+
+def get_strategy_totals(strategy_name: str) -> dict:
+    """Summed gross/charges/net P&L and win rate for one strategy's closed trades - backs
+    the dashboard's per-strategy running-totals footer."""
+    with session_scope() as session:
+        positions = session.scalars(
+            select(Position).where(Position.status == PositionStatus.CLOSED, Position.strategy_name == strategy_name)
+        ).all()
+        trade_count = len(positions)
+        gross = sum(p.realized_pnl_rs or 0.0 for p in positions)
+        charges = sum(p.charges_rs or 0.0 for p in positions)
+        net = sum(p.net_pnl_rs if p.net_pnl_rs is not None else (p.realized_pnl_rs or 0.0) for p in positions)
+        wins = sum(1 for p in positions if (p.realized_pnl_rs or 0.0) > 0)
+        return {
+            "strategy_name": strategy_name,
+            "trade_count": trade_count,
+            "gross_pnl_rs": gross,
+            "charges_rs": charges,
+            "net_pnl_rs": net,
+            "win_count": wins,
+            "win_rate_pct": (wins / trade_count * 100.0) if trade_count else 0.0,
+        }
 
 
 # --- Equity curve -------------------------------------------------------
@@ -414,6 +475,41 @@ def append_equity_point(realized_pnl_rs: float, unrealized_pnl_rs: float, total_
                 total_equity_rs=total_equity_rs,
             )
         )
+
+
+# --- Tick archive (data/tick_recorder.py writes here in batches) ------------
+
+
+def bulk_insert_ticks(rows: list[dict]) -> None:
+    """`rows` are plain dicts matching TickRecord's columns (token, tick_type,
+    trading_symbol, ltp, recorded_at) - a single batched INSERT, not one write per tick."""
+    if not rows:
+        return
+    with session_scope() as session:
+        session.bulk_insert_mappings(TickRecord, rows)
+
+
+def get_ticks_for_day(trade_date: date) -> list[dict]:
+    """Every recorded tick for one calendar day, oldest first - what the replay-backtest
+    engine reads."""
+    start = datetime(trade_date.year, trade_date.month, trade_date.day, tzinfo=timezone.utc)
+    end = start.replace(hour=23, minute=59, second=59)
+    with session_scope() as session:
+        rows = session.scalars(
+            select(TickRecord)
+            .where(TickRecord.recorded_at >= start, TickRecord.recorded_at <= end)
+            .order_by(TickRecord.recorded_at.asc())
+        ).all()
+        return [
+            {
+                "token": r.token,
+                "tick_type": r.tick_type,
+                "trading_symbol": r.trading_symbol,
+                "ltp": r.ltp,
+                "recorded_at": r.recorded_at,
+            }
+            for r in rows
+        ]
 
 
 def get_equity_curve(limit: int = 500) -> list[dict]:

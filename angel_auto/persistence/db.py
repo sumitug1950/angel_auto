@@ -49,7 +49,10 @@ def session_scope():
 
 
 def init_db() -> None:
-    """Create all tables that don't exist yet. Safe to call repeatedly (idempotent)."""
+    """Create all tables that don't exist yet, then apply any lightweight column/index
+    migrations needed on top of an already-existing DB. Safe to call repeatedly (idempotent)."""
+    from angel_auto.persistence.migrate import run_lightweight_migrations
     from angel_auto.persistence.models import Base  # local import avoids a circular import
 
     Base.metadata.create_all(get_engine())
+    run_lightweight_migrations()

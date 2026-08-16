@@ -1,8 +1,64 @@
 # Per-strategy tunables. Registered strategies are looked up by name in strategy/registry.py.
 
 active_strategy: macd_itm_otm_spread
+flagship_enabled: false   # the flagship (manual Long/Short spread) stays registered but off by
+                           # default while the two automatic zero-cross strategies are being tested
+
+# The two automatic, tick-driven, single-leg strategies - run concurrently, fully independent
+# trade records (see Position.strategy_name), no manual buttons, no daily trade-count cap.
+zero_cross_strategies:
+  - atm_sell_macd_zero
+  - itm4_buy_macd_zero
 
 strategies:
+  # --- ATM Sell: always SHORTS the ATM option. Bullish tick-MACD zero-cross signal -> short
+  # ATM PUT; bearish signal -> short ATM CALL. Exit on the opposite signal or a Rs 500 SL.
+  atm_sell_macd_zero:
+    class_path: "angel_auto.strategy.macd_zero_cross_single_leg.MacdZeroCrossSingleLegStrategy"
+    macd:
+      fast_period: 12    # raw TICK counts, not seconds - deliberately chosen for initial testing
+      slow_period: 26
+      signal_period: 9
+    single_leg:
+      side: SELL
+      strike_grid: 50    # real Nifty strike spacing
+      itm_offset_count: 0   # 0 = ATM
+    entry_window:
+      start: "09:15"
+      end: "15:15"
+    zero_cross_exit:
+      sl_amount_rs: 500
+    sizing:
+      lots: 1
+    risk_override:
+      daily_loss_limit_rs: 1500     # ~3 x sl_amount_rs - a pure safety backstop, not a trade-count cap
+      max_consecutive_losses: 3
+      max_trades_per_day: 100000    # effectively unbounded - re-enters on every fresh signal
+
+  # --- ITM4 Buy: always BUYS the option 4 strikes in-the-money. Bullish signal -> buy ITM4
+  # CALL; bearish signal -> buy ITM4 PUT. Same exit rule as ATM Sell.
+  itm4_buy_macd_zero:
+    class_path: "angel_auto.strategy.macd_zero_cross_single_leg.MacdZeroCrossSingleLegStrategy"
+    macd:
+      fast_period: 12
+      slow_period: 26
+      signal_period: 9
+    single_leg:
+      side: BUY
+      strike_grid: 50
+      itm_offset_count: 4
+    entry_window:
+      start: "09:15"
+      end: "15:15"
+    zero_cross_exit:
+      sl_amount_rs: 500
+    sizing:
+      lots: 1
+    risk_override:
+      daily_loss_limit_rs: 1500
+      max_consecutive_losses: 3
+      max_trades_per_day: 100000
+
   macd_itm_otm_spread:
     class_path: "angel_auto.strategy.macd_itm_otm_spread.MacdItmOtmSpreadStrategy"
 

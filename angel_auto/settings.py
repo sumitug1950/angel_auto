@@ -89,6 +89,23 @@ class DashboardConfig(BaseModel):
     port: int = 8000
 
 
+class ChargesConfig(BaseModel):
+    """Estimated Indian F&O brokerage + statutory charges (analytics/charges.py). Illustrative
+    defaults - not a guaranteed match to any specific broker's exact current tariff; edit
+    these to match a real contract note before trusting net-P&L figures for any decision."""
+
+    brokerage_per_order_rs: float = 40.0  # flat per executed order (entry + exit = x2 per trade)
+    stt_sell_pct: float = 0.1
+    exchange_txn_pct: float = 0.03503
+    gst_pct: float = 18.0
+    sebi_charges_pct: float = 0.0001
+    stamp_duty_buy_pct: float = 0.003
+
+
+class TickRecorderConfig(BaseModel):
+    enabled: bool = True
+
+
 class AppConfig(BaseModel):
     mode: Mode = Mode.PAPER
     timezone: str = "Asia/Kolkata"
@@ -104,6 +121,8 @@ class AppConfig(BaseModel):
     database: DatabaseConfig = DatabaseConfig()
     logging: LoggingConfig = LoggingConfig()
     dashboard: DashboardConfig = DashboardConfig()
+    charges: ChargesConfig = ChargesConfig()
+    tick_recorder: TickRecorderConfig = TickRecorderConfig()
 
 
 class MacdConfig(BaseModel):
@@ -153,6 +172,34 @@ class ExitConfig(BaseModel):
         return self.sl_amount_rs * self.risk_reward_ratio
 
 
+class SingleLegConfig(BaseModel):
+    """Only set for the automatic tick-driven zero-cross strategies (see
+    strategy/macd_zero_cross_single_leg.py) - None for the flagship spread strategy."""
+
+    side: Literal["BUY", "SELL"]
+    strike_grid: float = 50.0  # real Nifty strike spacing, not the flagship's coarser 100-pt grid
+    itm_offset_count: int = 0  # 0 = ATM; N = N strikes in-the-money from ATM
+
+
+class EntryWindowConfig(BaseModel):
+    start: str = "09:15"
+    end: str = "15:15"
+
+
+class ZeroCrossExitConfig(BaseModel):
+    sl_amount_rs: float = 500.0
+
+
+class StrategyRiskOverrideConfig(BaseModel):
+    """Per-strategy override of config.yaml's global risk.* - used by the zero-cross
+    strategies, which trade far smaller SL amounts than the flagship and (per explicit
+    instruction) have no daily trade-count cap."""
+
+    daily_loss_limit_rs: float = 1500.0
+    max_consecutive_losses: int = 3
+    max_trades_per_day: int = 100_000  # effectively unbounded - re-enter on every fresh signal
+
+
 class StrategyConfig(BaseModel):
     class_path: str
     candle_interval_sec: int = 15
@@ -163,10 +210,16 @@ class StrategyConfig(BaseModel):
     expiry: ExpiryConfig = ExpiryConfig()
     sizing: SizingConfig = SizingConfig()
     exit: ExitConfig = ExitConfig()
+    single_leg: SingleLegConfig | None = None
+    entry_window: EntryWindowConfig = EntryWindowConfig()
+    zero_cross_exit: ZeroCrossExitConfig = ZeroCrossExitConfig()
+    risk_override: StrategyRiskOverrideConfig = StrategyRiskOverrideConfig()
 
 
 class StrategiesFile(BaseModel):
     active_strategy: str
+    flagship_enabled: bool = True
+    zero_cross_strategies: list[str] = Field(default_factory=list)
     strategies: dict[str, StrategyConfig]
 
     @property

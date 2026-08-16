@@ -22,15 +22,20 @@ class PretradeCheckResult:
     reason: str = ""
 
 
-def check_trading_halted(trade_date: date | None = None) -> PretradeCheckResult:
-    state = journal.get_or_create_daily_state(trade_date)
+DEFAULT_STRATEGY_NAME = "macd_itm_otm_spread"
+
+
+def check_trading_halted(trade_date: date | None = None, strategy_name: str = DEFAULT_STRATEGY_NAME) -> PretradeCheckResult:
+    state = journal.get_or_create_daily_state(trade_date, strategy_name=strategy_name)
     if state["trading_halted"]:
         return PretradeCheckResult(False, state["halt_reason"] or "trading halted")
     return PretradeCheckResult(True)
 
 
-def check_daily_trade_cap(max_trades_per_day: int, trade_date: date | None = None) -> PretradeCheckResult:
-    state = journal.get_or_create_daily_state(trade_date)
+def check_daily_trade_cap(
+    max_trades_per_day: int, trade_date: date | None = None, strategy_name: str = DEFAULT_STRATEGY_NAME
+) -> PretradeCheckResult:
+    state = journal.get_or_create_daily_state(trade_date, strategy_name=strategy_name)
     if state["trades_taken"] >= max_trades_per_day:
         return PretradeCheckResult(
             False, f"daily trade cap reached ({state['trades_taken']}/{max_trades_per_day})"
@@ -38,24 +43,29 @@ def check_daily_trade_cap(max_trades_per_day: int, trade_date: date | None = Non
     return PretradeCheckResult(True)
 
 
-def check_no_concurrent_position(max_concurrent_positions: int = 1) -> PretradeCheckResult:
+def check_no_concurrent_position(
+    max_concurrent_positions: int = 1, strategy_name: str = DEFAULT_STRATEGY_NAME
+) -> PretradeCheckResult:
     if max_concurrent_positions > 1:
         # not a scenario the flagship strategy uses (max_concurrent_positions=1), but keep
         # the check meaningful rather than hardcoding the single-position assumption
         return PretradeCheckResult(True)
-    if journal.get_open_position() is not None:
+    if journal.get_open_position(strategy_name=strategy_name) is not None:
         return PretradeCheckResult(False, "a position is already open (max_concurrent_positions=1)")
     return PretradeCheckResult(True)
 
 
 def run_pretrade_checks(
-    max_trades_per_day: int, max_concurrent_positions: int = 1, trade_date: date | None = None
+    max_trades_per_day: int,
+    max_concurrent_positions: int = 1,
+    trade_date: date | None = None,
+    strategy_name: str = DEFAULT_STRATEGY_NAME,
 ) -> PretradeCheckResult:
     """Runs every check in order, short-circuiting on the first failure."""
     checks = (
-        lambda: check_trading_halted(trade_date),
-        lambda: check_daily_trade_cap(max_trades_per_day, trade_date),
-        lambda: check_no_concurrent_position(max_concurrent_positions),
+        lambda: check_trading_halted(trade_date, strategy_name=strategy_name),
+        lambda: check_daily_trade_cap(max_trades_per_day, trade_date, strategy_name=strategy_name),
+        lambda: check_no_concurrent_position(max_concurrent_positions, strategy_name=strategy_name),
     )
     for check in checks:
         result = check()

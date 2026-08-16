@@ -68,6 +68,7 @@ class _FakeTradingApp:
             max_trades_per_day=self.settings.app.risk.max_trades_per_day, instruments=self.instruments,
             bar_aggregator=self.bars, option_chain=self.option_chain, get_current_vix=lambda: 15.0,
         )
+        self.zero_cross_strategies = {}
 
         class _Router:
             latest_spot = 24790.0

@@ -21,16 +21,19 @@ from __future__ import annotations
 import time
 from datetime import date
 
+from angel_auto.analytics.charges import estimate_charges_rs
 from angel_auto.broker.base import BrokerAdapter, OrderRequest
 from angel_auto.core.enums import ExitReason, OrderSide, OrderStatus, PositionStatus, StructureType
 from angel_auto.logging_conf import get_logger
 from angel_auto.persistence import journal
 from angel_auto.risk import circuit_breaker
+from angel_auto.settings import ChargesConfig
 from angel_auto.strategy.base import EntryIntent, ExitIntent, LegIntent
 
 log = get_logger(__name__)
 
 EXCHANGE = "NFO"
+DEFAULT_STRATEGY_NAME = "macd_itm_otm_spread"
 
 
 class OrderManager:
@@ -41,16 +44,20 @@ class OrderManager:
         entry_slippage_buffer_pts: float = 1.0,
         max_otm_retry_attempts: int = 3,
         retry_delay_sec: float = 1.0,
+        charges_config: ChargesConfig | None = None,
     ) -> None:
         self.broker = broker
         self.product_type = product_type
         self.entry_slippage_buffer_pts = entry_slippage_buffer_pts
         self.max_otm_retry_attempts = max_otm_retry_attempts
         self.retry_delay_sec = retry_delay_sec
+        self.charges_config = charges_config
 
     # --- Entry --------------------------------------------------------------
 
-    def execute_entry(self, intent: EntryIntent, trade_date: date | None = None) -> int | None:
+    def execute_entry(
+        self, intent: EntryIntent, trade_date: date | None = None, strategy_name: str = DEFAULT_STRATEGY_NAME
+    ) -> int | None:
         """Returns the new position's id on success, None if the entry was aborted.
         `trade_date` defaults to real today; the backtest engine passes its simulated day
         so the daily trade-count counter scopes to the day being replayed."""
@@ -60,7 +67,11 @@ class OrderManager:
             intent.expiry,
             direction_request_id=intent.direction_request_id,
             iv_rank_at_entry=intent.iv_rank,
+            strategy_name=strategy_name,
         )
+
+        if len(intent.legs) == 1:
+            return self._execute_single_leg_entry(position_id, intent, trade_date, strategy_name)
 
         itm_leg = next(leg for leg in intent.legs if leg.role == "ITM")
         otm_leg = next(leg for leg in intent.legs if leg.role == "OTM")
@@ -95,8 +106,30 @@ class OrderManager:
             journal.update_leg_fill(second_leg_id, entry_price=second_fill)
 
         journal.update_position_status(position_id, PositionStatus.OPEN, set_entry_time=True)
-        journal.increment_daily_trade_count(trade_date)
-        log.info("entry_executed", position_id=position_id, structure=intent.structure_type.value)
+        journal.increment_daily_trade_count(trade_date, strategy_name=strategy_name)
+        log.info("entry_executed", position_id=position_id, strategy=strategy_name, structure=intent.structure_type.value)
+        return position_id
+
+    def _execute_single_leg_entry(
+        self, position_id: int, intent: EntryIntent, trade_date: date | None, strategy_name: str
+    ) -> int | None:
+        """A one-leg entry (the zero-cross strategies) - no partner-leg-cleanup concern
+        since there's nothing to unwind, so a failed fill just retries like the flagship's
+        OTM leg does."""
+        leg = intent.legs[0]
+        leg_id = self._persist_leg(position_id, leg)
+        fill = self._place_entry_leg(leg_id, leg)
+        if fill is None:
+            fill = self._retry_leg(leg_id, leg)
+        if fill is None:
+            log.error("entry_aborted_single_leg_failed", position_id=position_id, strategy=strategy_name)
+            journal.update_position_status(position_id, PositionStatus.ABORTED)
+            return None
+
+        journal.update_leg_fill(leg_id, entry_price=fill)
+        journal.update_position_status(position_id, PositionStatus.OPEN, set_entry_time=True)
+        journal.increment_daily_trade_count(trade_date, strategy_name=strategy_name)
+        log.info("entry_executed", position_id=position_id, strategy=strategy_name, structure="SINGLE_LEG")
         return position_id
 
     def _persist_leg(self, position_id: int, leg: LegIntent) -> int:
@@ -192,17 +225,19 @@ class OrderManager:
         daily_loss_limit_rs: float,
         max_consecutive_losses: int,
         trade_date: date | None = None,
+        strategy_name: str = DEFAULT_STRATEGY_NAME,
     ) -> None:
         """`trade_date` defaults to real today; the backtest engine passes its simulated
         day so realized P&L and the circuit breaker scope to the day being replayed."""
-        open_position = journal.get_open_position()
+        open_position = journal.get_open_position(strategy_name=strategy_name)
         if open_position is None:
-            log.warning("execute_exit_called_with_nothing_open", reason=intent.reason.value)
+            log.warning("execute_exit_called_with_nothing_open", strategy=strategy_name, reason=intent.reason.value)
             return
 
         journal.update_position_status(open_position["id"], PositionStatus.CLOSING)
 
         realized_pnl = 0.0
+        charges_rs = 0.0
         for leg in open_position["legs"]:
             fill_price = self._place_exit_leg(leg)
             if fill_price is None:
@@ -214,11 +249,25 @@ class OrderManager:
                 realized_pnl += (fill_price - entry_price) * leg["quantity"]
             else:
                 realized_pnl += (entry_price - fill_price) * leg["quantity"]
+            if self.charges_config is not None:
+                breakdown = estimate_charges_rs(entry_price, fill_price, leg["quantity"], leg["side"], self.charges_config)
+                charges_rs += breakdown.total_rs
 
-        journal.close_position(open_position["id"], intent.reason, realized_pnl, trade_date)
-        log.info("exit_executed", position_id=open_position["id"], reason=intent.reason.value, realized_pnl_rs=realized_pnl)
+        journal.close_position(
+            open_position["id"], intent.reason, realized_pnl, trade_date, strategy_name=strategy_name, charges_rs=charges_rs
+        )
+        log.info(
+            "exit_executed",
+            position_id=open_position["id"],
+            strategy=strategy_name,
+            reason=intent.reason.value,
+            realized_pnl_rs=realized_pnl,
+            charges_rs=charges_rs,
+        )
 
-        circuit_breaker.evaluate_after_trade_close(daily_loss_limit_rs, max_consecutive_losses, trade_date)
+        circuit_breaker.evaluate_after_trade_close(
+            daily_loss_limit_rs, max_consecutive_losses, trade_date, strategy_name=strategy_name
+        )
 
     def _place_exit_leg(self, leg: dict) -> float | None:
         opposite_side = OrderSide.SELL if leg["side"] == OrderSide.BUY else OrderSide.BUY

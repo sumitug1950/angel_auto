@@ -27,14 +27,30 @@ class StructureRequestBody(BaseModel):
     structure_type: StructureType
 
 
+def _zero_cross_status(app) -> dict:
+    result = {}
+    for name, strategy in app.zero_cross_strategies.items():
+        open_position = journal.get_open_position(strategy_name=name)
+        unrealized_pnl = strategy.position_pnl_rs(open_position) if open_position is not None else 0.0
+        daily_state = journal.get_or_create_daily_state(strategy_name=name)
+        result[name] = {
+            "open_position": open_position,
+            "unrealized_pnl_rs": unrealized_pnl,
+            "daily_state": daily_state,
+            "macd": strategy.tick_macd.macd,
+            "signal": strategy.tick_macd.signal,
+        }
+    return result
+
+
 @router.get("/status")
 def get_status():
     app = get_trading_app()
     daily_state = journal.get_or_create_daily_state()
-    open_position = journal.get_open_position()
+    open_position = journal.get_open_position() if app.strategy is not None else None
     pending = journal.get_pending_direction_request()
 
-    unrealized_pnl = app.strategy.position_pnl_rs(open_position) if open_position is not None else 0.0
+    unrealized_pnl = app.strategy.position_pnl_rs(open_position) if (app.strategy is not None and open_position is not None) else 0.0
 
     market_open = is_market_open(
         datetime.now(app._scheduler.tz),
@@ -52,13 +68,19 @@ def get_status():
         "unrealized_pnl_rs": unrealized_pnl,
         "pending_request": pending,
         "structure_preference": journal.get_structure_preference(),
+        "zero_cross": _zero_cross_status(app),
     }
     return JSONResponse(content=jsonable_encoder(payload))
 
 
 @router.get("/trades")
-def get_trades(limit: int = 50):
-    return JSONResponse(content=jsonable_encoder(journal.list_recent_positions(limit)))
+def get_trades(limit: int = 50, strategy_name: str | None = None):
+    return JSONResponse(content=jsonable_encoder(journal.list_recent_positions(limit, strategy_name=strategy_name)))
+
+
+@router.get("/strategy-summary")
+def get_strategy_summary(strategy_name: str):
+    return JSONResponse(content=jsonable_encoder(journal.get_strategy_totals(strategy_name)))
 
 
 @router.get("/equity-curve")
@@ -101,6 +123,24 @@ def post_exit_now():
 def post_kill_switch():
     app = get_trading_app()
     app.kill_switch("dashboard kill-switch")
+    return {"ok": True}
+
+
+@router.post("/zero-cross/{strategy_name}/exit-now")
+def post_zero_cross_exit_now(strategy_name: str):
+    app = get_trading_app()
+    if strategy_name not in app.zero_cross_strategies:
+        raise HTTPException(status_code=404, detail=f"unknown zero-cross strategy '{strategy_name}'")
+    app.manual_exit_for(strategy_name)
+    return {"ok": True}
+
+
+@router.post("/zero-cross/{strategy_name}/kill-switch")
+def post_zero_cross_kill_switch(strategy_name: str):
+    app = get_trading_app()
+    if strategy_name not in app.zero_cross_strategies:
+        raise HTTPException(status_code=404, detail=f"unknown zero-cross strategy '{strategy_name}'")
+    app.kill_switch_for(strategy_name, "dashboard kill-switch")
     return {"ok": True}
 
 

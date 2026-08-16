@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from angel_auto.strategy.base import Strategy
 from angel_auto.strategy.macd_itm_otm_spread import MacdItmOtmSpreadStrategy
+from angel_auto.strategy.macd_zero_cross_single_leg import MacdZeroCrossSingleLegStrategy
 
 STRATEGY_REGISTRY: dict[str, type[Strategy]] = {
     "macd_itm_otm_spread": MacdItmOtmSpreadStrategy,
+    "atm_sell_macd_zero": MacdZeroCrossSingleLegStrategy,
+    "itm4_buy_macd_zero": MacdZeroCrossSingleLegStrategy,
 }
 
 

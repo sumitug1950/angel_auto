@@ -18,8 +18,14 @@
   </header>
 
   <main>
+    <section class="card card-wide" id="chart-card">
+      <h2>Nifty Spot - Tick by Tick + MACD</h2>
+      <div id="price-chart" class="chart-box"></div>
+      <div id="macd-chart" class="chart-box chart-box-small"></div>
+    </section>
+
     <section class="card" id="controls">
-      <h2>Manual Control</h2>
+      <h2>Manual Control (Flagship)</h2>
       <div class="control-row">
         <button id="btn-buying" class="btn btn-buying">Buying</button>
         <button id="btn-selling" class="btn btn-selling">Selling</button>
@@ -42,8 +48,44 @@
       </div>
     </section>
 
+    <section class="card" id="zc-atm_sell_macd_zero-card">
+      <h2>ATM Sell - Automatic</h2>
+      <p id="zc-status-atm_sell_macd_zero" class="position-status">Position: --</p>
+      <div class="control-row">
+        <button class="btn btn-warning" data-strategy="atm_sell_macd_zero" data-action="exit-now">Exit Now</button>
+        <button class="btn btn-danger" data-strategy="atm_sell_macd_zero" data-action="kill-switch">Kill Switch</button>
+      </div>
+      <p class="strategy-summary" id="summary-atm_sell_macd_zero">Trades: -- | Net: --</p>
+      <div class="table-scroll">
+        <table class="trades-table" data-strategy="atm_sell_macd_zero">
+          <thead>
+            <tr><th>Entry</th><th>Exit</th><th>Leg</th><th>Entry Px</th><th>Exit Px</th><th>Gross</th><th>Charges</th><th>Net</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card" id="zc-itm4_buy_macd_zero-card">
+      <h2>ITM4 Buy - Automatic</h2>
+      <p id="zc-status-itm4_buy_macd_zero" class="position-status">Position: --</p>
+      <div class="control-row">
+        <button class="btn btn-warning" data-strategy="itm4_buy_macd_zero" data-action="exit-now">Exit Now</button>
+        <button class="btn btn-danger" data-strategy="itm4_buy_macd_zero" data-action="kill-switch">Kill Switch</button>
+      </div>
+      <p class="strategy-summary" id="summary-itm4_buy_macd_zero">Trades: -- | Net: --</p>
+      <div class="table-scroll">
+        <table class="trades-table" data-strategy="itm4_buy_macd_zero">
+          <thead>
+            <tr><th>Entry</th><th>Exit</th><th>Leg</th><th>Entry Px</th><th>Exit Px</th><th>Gross</th><th>Charges</th><th>Net</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
     <section class="card" id="trades-card">
-      <h2>Trade Log</h2>
+      <h2>Flagship Trade Log</h2>
       <button id="btn-refresh-trades" class="btn btn-small">Refresh</button>
       <table id="trades-table">
         <thead>
@@ -60,6 +102,7 @@
     </section>
   </main>
 
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 <script>
 const el = (id) => document.getElementById(id);
 
@@ -109,6 +152,20 @@ function applyStatus(data) {
   const isCredit = data.structure_preference === "CREDIT";
   el("btn-long").textContent = "Long (" + (isCredit ? "Put" : "Call") + ")";
   el("btn-short").textContent = "Short (" + (isCredit ? "Call" : "Put") + ")";
+
+  if (data.zero_cross) {
+    Object.entries(data.zero_cross).forEach(([name, zc]) => {
+      const statusEl = el("zc-status-" + name);
+      if (!statusEl) return;
+      if (zc.open_position) {
+        statusEl.textContent = "Position: ACTIVE (" + zc.open_position.direction + ") | Unrealized: " + fmtRs(zc.unrealized_pnl_rs);
+        statusEl.className = "position-status active";
+      } else {
+        statusEl.textContent = "Position: NONE";
+        statusEl.className = "position-status";
+      }
+    });
+  }
 }
 
 function connectWs() {
@@ -165,6 +222,110 @@ async function refreshLogs() {
 }
 el("btn-refresh-logs").onclick = refreshLogs;
 refreshLogs();
+
+// --- Zero-cross strategy panels (ATM Sell / ITM4 Buy) ------------------------
+
+const ZC_STRATEGIES = ["atm_sell_macd_zero", "itm4_buy_macd_zero"];
+
+async function refreshZeroCrossTrades(name) {
+  const trades = await (await fetch("/api/trades?strategy_name=" + name)).json();
+  const tbody = document.querySelector('.trades-table[data-strategy="' + name + '"] tbody');
+  tbody.innerHTML = trades.map((t) => {
+    const leg = (t.legs && t.legs[0]) || {};
+    return `
+      <tr>
+        <td>${t.entry_time ? new Date(t.entry_time).toLocaleTimeString() : "--"}</td>
+        <td>${t.exit_time ? new Date(t.exit_time).toLocaleTimeString() : "--"}</td>
+        <td>${leg.side || ""} ${leg.option_type || ""} ${leg.strike ?? "--"}</td>
+        <td>${leg.entry_price != null ? leg.entry_price.toFixed(2) : "--"}</td>
+        <td>${leg.exit_price != null ? leg.exit_price.toFixed(2) : "--"}</td>
+        <td class="${t.realized_pnl_rs >= 0 ? 'pos' : 'neg'}">${fmtRs(t.realized_pnl_rs)}</td>
+        <td>${fmtRs(t.charges_rs)}</td>
+        <td class="${t.net_pnl_rs >= 0 ? 'pos' : 'neg'}">${fmtRs(t.net_pnl_rs)}</td>
+      </tr>`;
+  }).join("");
+
+  const summary = await (await fetch("/api/strategy-summary?strategy_name=" + name)).json();
+  el("summary-" + name).textContent =
+    "Trades: " + summary.trade_count +
+    " | Win rate: " + summary.win_rate_pct.toFixed(0) + "%" +
+    " | Gross: " + fmtRs(summary.gross_pnl_rs) +
+    " | Charges: " + fmtRs(summary.charges_rs) +
+    " | Net: " + fmtRs(summary.net_pnl_rs);
+}
+
+function refreshAllZeroCrossTrades() {
+  ZC_STRATEGIES.forEach(refreshZeroCrossTrades);
+}
+refreshAllZeroCrossTrades();
+setInterval(refreshAllZeroCrossTrades, 5000);
+
+document.querySelectorAll('[data-action="exit-now"]').forEach((btn) => {
+  btn.onclick = () => {
+    if (confirm("Exit " + btn.dataset.strategy + " now, regardless of P&L?")) {
+      postAction("/api/zero-cross/" + btn.dataset.strategy + "/exit-now");
+    }
+  };
+});
+document.querySelectorAll('[data-action="kill-switch"]').forEach((btn) => {
+  btn.onclick = () => {
+    if (confirm("Kill switch for " + btn.dataset.strategy + ": halt it and force-exit any open position?")) {
+      postAction("/api/zero-cross/" + btn.dataset.strategy + "/kill-switch");
+    }
+  };
+});
+
+// --- Live tick-by-tick Nifty chart + MACD sub-chart ---------------------------
+
+let priceChart, priceSeries, macdChart, macdLineSeries, signalLineSeries, histSeries;
+
+function initCharts() {
+  const chartTheme = {
+    layout: { background: { color: "#171a21" }, textColor: "#e6e8eb" },
+    grid: { vertLines: { color: "#2a2e38" }, horzLines: { color: "#2a2e38" } },
+    timeScale: { timeVisible: true, secondsVisible: true },
+  };
+
+  priceChart = LightweightCharts.createChart(el("price-chart"), chartTheme);
+  priceSeries = priceChart.addLineSeries({ color: "#3b82f6", lineWidth: 2, title: "Nifty Spot" });
+
+  macdChart = LightweightCharts.createChart(el("macd-chart"), chartTheme);
+  histSeries = macdChart.addHistogramSeries({ color: "#8a8f98" });
+  macdLineSeries = macdChart.addLineSeries({ color: "#3b82f6", lineWidth: 1, title: "MACD" });
+  signalLineSeries = macdChart.addLineSeries({ color: "#f59e0b", lineWidth: 1, title: "Signal" });
+  macdLineSeries.createPriceLine({
+    price: 0, color: "#8a8f98", lineWidth: 1,
+    lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: "zero",
+  });
+
+  const resize = () => {
+    priceChart.applyOptions({ width: el("price-chart").clientWidth });
+    macdChart.applyOptions({ width: el("macd-chart").clientWidth });
+  };
+  new ResizeObserver(resize).observe(el("chart-card"));
+  resize();
+}
+
+function connectTicksWs() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const ws = new WebSocket(proto + "//" + location.host + "/ws/ticks");
+  ws.onmessage = (evt) => {
+    const msg = JSON.parse(evt.data);
+    const t = Math.floor(new Date(msg.ts).getTime() / 1000);
+    if (msg.type === "tick") {
+      priceSeries.update({ time: t, value: msg.spot });
+    } else if (msg.type === "macd") {
+      macdLineSeries.update({ time: t, value: msg.macd });
+      signalLineSeries.update({ time: t, value: msg.signal });
+      histSeries.update({ time: t, value: msg.histogram, color: msg.histogram >= 0 ? "#22c55e" : "#ef4444" });
+    }
+  };
+  ws.onclose = () => setTimeout(connectTicksWs, 2000);
+  ws.onerror = () => ws.close();
+}
+
+initCharts();
+connectTicksWs();
 </script>
 </body>
 </html>

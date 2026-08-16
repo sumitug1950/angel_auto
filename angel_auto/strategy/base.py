@@ -49,6 +49,13 @@ class Strategy(ABC):
         ...
 
     @abstractmethod
+    def on_structure_request(self, structure_type: StructureType) -> None:
+        """Manual Buying (DEBIT) / Selling (CREDIT) button from the dashboard - not a
+        trigger and not MACD-gated, just sets the preference applied at the next entry.
+        A VIX-spike override can still take precedence over this at execution time."""
+        ...
+
+    @abstractmethod
     def on_market_data(self) -> EntryIntent | ExitIntent | None:
         """Called on every new candle close. Resolves a Pending direction request against
         the current MACD state if nothing is open, or evaluates exit conditions if a

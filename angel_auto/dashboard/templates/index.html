@@ -29,6 +29,13 @@
         <button id="btn-cancel-pending" class="btn btn-small">Cancel</button>
       </div>
       <p id="position-status" class="position-status">Position: --</p>
+
+      <div class="control-row">
+        <button id="btn-buying" class="btn btn-buying">Buying</button>
+        <button id="btn-selling" class="btn btn-selling">Selling</button>
+      </div>
+      <p id="structure-status" class="position-status">Structure preference: --</p>
+
       <div class="control-row">
         <button id="btn-exit-now" class="btn btn-warning">Exit Now</button>
         <button id="btn-kill-switch" class="btn btn-danger">Kill Switch</button>
@@ -87,6 +94,10 @@ function applyStatus(data) {
     statusEl.textContent = "Position: NONE";
     statusEl.className = "position-status";
   }
+
+  const structureEl = el("structure-status");
+  structureEl.textContent = "Structure preference: " + (data.structure_preference || "--") +
+    " (applied at next entry - a VIX spike can still override it)";
 }
 
 function connectWs() {
@@ -110,6 +121,8 @@ async function postAction(url, body) {
 el("btn-long").onclick = () => postAction("/api/direction", { direction: "LONG" });
 el("btn-short").onclick = () => postAction("/api/direction", { direction: "SHORT" });
 el("btn-cancel-pending").onclick = () => postAction("/api/cancel-pending");
+el("btn-buying").onclick = () => postAction("/api/structure", { structure_type: "DEBIT" });
+el("btn-selling").onclick = () => postAction("/api/structure", { structure_type: "CREDIT" });
 el("btn-exit-now").onclick = () => {
   if (confirm("Exit current position now, regardless of P&L?")) postAction("/api/exit-now");
 };

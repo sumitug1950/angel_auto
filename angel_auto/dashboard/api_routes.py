@@ -9,7 +9,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from angel_auto.core.enums import Direction
+from angel_auto.core.enums import Direction, StructureType
 from angel_auto.dashboard.state import get_trading_app
 from angel_auto.logging_conf import get_logger
 from angel_auto.persistence import journal
@@ -21,6 +21,10 @@ router = APIRouter(prefix="/api")
 
 class DirectionRequestBody(BaseModel):
     direction: Direction
+
+
+class StructureRequestBody(BaseModel):
+    structure_type: StructureType
 
 
 @router.get("/status")
@@ -47,6 +51,7 @@ def get_status():
         "open_position": open_position,
         "unrealized_pnl_rs": unrealized_pnl,
         "pending_request": pending,
+        "structure_preference": journal.get_structure_preference(),
     }
     return JSONResponse(content=jsonable_encoder(payload))
 
@@ -70,6 +75,13 @@ def post_direction(body: DirectionRequestBody):
         log.exception("direction_request_api_failed")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"executed_immediately": intent is not None}
+
+
+@router.post("/structure")
+def post_structure(body: StructureRequestBody):
+    app = get_trading_app()
+    app.request_structure(body.structure_type)
+    return {"structure_preference": body.structure_type.value}
 
 
 @router.post("/cancel-pending")

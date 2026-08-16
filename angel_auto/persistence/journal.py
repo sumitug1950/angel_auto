@@ -27,6 +27,7 @@ from angel_auto.persistence.models import (
     Leg,
     Order,
     Position,
+    StrategyPreference,
 )
 
 
@@ -71,6 +72,24 @@ def get_previous_vix_close(before_date: date | None = None) -> float | None:
             .limit(1)
         )
         return row.vix_close if row else None
+
+
+# --- Structure preference (manual Buying/Selling button, applied at next entry) --------
+
+
+def set_structure_preference(structure_type: StructureType) -> None:
+    with session_scope() as session:
+        pref = session.scalar(select(StrategyPreference).limit(1))
+        if pref is None:
+            session.add(StrategyPreference(structure_type=structure_type))
+        else:
+            pref.structure_type = structure_type
+
+
+def get_structure_preference(default: StructureType = StructureType.DEBIT) -> StructureType:
+    with session_scope() as session:
+        pref = session.scalar(select(StrategyPreference).limit(1))
+        return pref.structure_type if pref else default
 
 
 # --- Daily risk state (max_trades_per_day, daily_loss_limit_rs, kill state) ----

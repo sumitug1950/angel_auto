@@ -17,7 +17,7 @@ from angel_auto.broker.angelone_rest import AngelOneBroker
 from angel_auto.broker.angelone_ws import EXCHANGE_NSE_CM, EXCHANGE_NSE_FO, MODE_LTP, MODE_QUOTE, AngelOneWebSocket
 from angel_auto.broker.base import BrokerAdapter
 from angel_auto.broker.paper_broker import PaperBroker
-from angel_auto.core.enums import Direction, Mode
+from angel_auto.core.enums import Direction, Mode, StructureType
 from angel_auto.data.historical import bootstrap_vix_history, capture_eod_vix_close
 from angel_auto.data.instruments import InstrumentMaster
 from angel_auto.data.live_feed import GreeksRefresher, LiveFeedRouter, build_subscription_tokens
@@ -173,6 +173,11 @@ class TradingApp:
         if intent is not None:
             self.oms.execute_entry(intent)
         return intent
+
+    def request_structure(self, structure_type: StructureType) -> None:
+        """Manual Buying/Selling button - sets the preference used at the next entry (see
+        strategy.on_structure_request; a VIX spike can still override it at that moment)."""
+        self.strategy.on_structure_request(structure_type)
 
     def cancel_pending(self) -> bool:
         return self.strategy.cancel_pending_request()

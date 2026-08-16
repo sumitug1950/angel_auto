@@ -139,8 +139,8 @@ class MacdItmOtmSpreadStrategy(Strategy):
             journal.resolve_direction_request(direction_request_id, PendingRequestStatus.CANCELLED)
             return None
 
-        iv_rank = self._compute_iv_rank()
-        structure_type = self._select_structure(iv_rank)
+        iv_rank = self._compute_iv_rank()  # recorded for reference only - no longer drives structure selection
+        structure_type = self._select_structure()
         expiry = self._select_expiry(structure_type)
 
         legs = self._select_legs(direction, structure_type, expiry)
@@ -175,27 +175,40 @@ class MacdItmOtmSpreadStrategy(Strategy):
         except Exception:  # not enough VIX history yet, or feed unavailable - fall back to DEBIT default
             return None
 
-    def _is_vix_spiking(self) -> bool:
-        """VIX up sharply vs yesterday's close means rising fear/uncertainty - CREDIT
-        (short ITM + hedge) is riskier on a day like that, so it's force-disabled
-        regardless of IV Rank. Only an *upward* spike counts - a falling VIX is a calming
-        market, not a reason to restrict anything."""
+    def _vix_spike_direction(self) -> str | None:
+        """"UP", "DOWN", or None (no spike either way) vs yesterday's VIX close. A rise
+        means rising fear/uncertainty - CREDIT (short ITM + hedge) is riskier that day. A
+        drop means a calming market - good conditions for CREDIT, bad reason to force a
+        cheap DEBIT buy. Both directions use the same threshold, symmetric either way."""
         try:
             current_vix = self.get_current_vix()
             previous_close = journal.get_previous_vix_close(before_date=self.get_today())
             if not previous_close:
-                return False
+                return None
             pct_change = (current_vix - previous_close) / previous_close * 100.0
-            return pct_change >= self.config.structure.vix_spike_pct_threshold
+            threshold = self.config.structure.vix_spike_pct_threshold
+            if pct_change >= threshold:
+                return "UP"
+            if pct_change <= -threshold:
+                return "DOWN"
+            return None
         except Exception:
-            return False
+            return None
 
-    def _select_structure(self, iv_rank: float | None) -> StructureType:
-        if self._is_vix_spiking():
-            return StructureType.DEBIT
-        if iv_rank is not None and iv_rank >= self.config.structure.credit_iv_rank_threshold:
-            return StructureType.CREDIT
-        return StructureType.DEBIT
+    def on_structure_request(self, structure_type: StructureType) -> None:
+        """Manual Buying (DEBIT) / Selling (CREDIT) button - not a trigger and not MACD-
+        gated, just updates the preference applied at the next entry. See _select_structure
+        for how the VIX-spike override can still take precedence over this at that moment."""
+        journal.set_structure_preference(structure_type)
+        log.info("structure_preference_set", structure=structure_type.value)
+
+    def _select_structure(self) -> StructureType:
+        spike = self._vix_spike_direction()
+        if spike == "UP":
+            return StructureType.DEBIT   # force Buying - CREDIT's short leg is riskiest on a VIX spike-up day
+        if spike == "DOWN":
+            return StructureType.CREDIT  # force Selling - calming market, good theta conditions
+        return journal.get_structure_preference()  # no spike either way - respect your button
 
     def _select_expiry(self, structure_type: StructureType) -> str:
         today = self.get_today()

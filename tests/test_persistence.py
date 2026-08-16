@@ -41,6 +41,21 @@ def test_get_previous_vix_close_none_when_no_history():
     assert journal.get_previous_vix_close(before_date=date(2026, 8, 11)) is None
 
 
+def test_structure_preference_defaults_when_never_set():
+    assert journal.get_structure_preference() == StructureType.DEBIT
+
+
+def test_structure_preference_set_and_get():
+    journal.set_structure_preference(StructureType.CREDIT)
+    assert journal.get_structure_preference() == StructureType.CREDIT
+
+
+def test_structure_preference_overwrites_previous_value():
+    journal.set_structure_preference(StructureType.CREDIT)
+    journal.set_structure_preference(StructureType.DEBIT)
+    assert journal.get_structure_preference() == StructureType.DEBIT
+
+
 def test_daily_state_create_and_increment():
     state = journal.get_or_create_daily_state(date(2026, 8, 16))
     assert state["trades_taken"] == 0

@@ -80,6 +80,9 @@ class _FakeTradingApp:
     def request_direction(self, direction):
         return self.strategy.on_direction_request(direction)
 
+    def request_structure(self, structure_type):
+        self.strategy.on_structure_request(structure_type)
+
     def cancel_pending(self):
         return self.strategy.cancel_pending_request()
 
@@ -115,6 +118,21 @@ def test_status_endpoint(client):
     assert data["vix"] == 15.0
     assert data["open_position"] is None
     assert data["daily_state"]["trades_taken"] == 0
+    assert data["structure_preference"] == "DEBIT"  # default before any button is pressed
+
+
+def test_structure_endpoint_sets_preference(client):
+    resp = client.post("/api/structure", json={"structure_type": "CREDIT"})
+    assert resp.status_code == 200
+    assert resp.json()["structure_preference"] == "CREDIT"
+
+    status = client.get("/api/status").json()
+    assert status["structure_preference"] == "CREDIT"
+
+
+def test_structure_endpoint_rejects_invalid_value(client):
+    resp = client.post("/api/structure", json={"structure_type": "SIDEWAYS"})
+    assert resp.status_code == 422
 
 
 def test_direction_request_goes_pending_when_macd_disagrees(client):

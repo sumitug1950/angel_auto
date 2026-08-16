@@ -46,6 +46,19 @@ class IVHistory(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
+class StrategyPreference(Base):
+    """Singleton row: your manual Buying/Selling (DEBIT/CREDIT) button preference, applied
+    to the next entry whenever a direction request actually executes - not itself a
+    trigger, and not MACD-gated like direction. The VIX-spike override in the strategy can
+    still force a different structure than this preference at execution time."""
+
+    __tablename__ = "strategy_preference"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    structure_type: Mapped[StructureType] = mapped_column(SAEnum(StructureType))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
 class DailyRiskState(Base):
     """One row per trading day - the running counters risk/circuit_breaker.py and
     risk/pretrade.py check before allowing any new entry."""

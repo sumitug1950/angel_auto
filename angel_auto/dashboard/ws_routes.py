@@ -39,6 +39,7 @@ def _build_status_payload() -> dict:
         "open_position": open_position,
         "unrealized_pnl_rs": unrealized_pnl,
         "pending_request": pending,
+        "structure_preference": journal.get_structure_preference(),
     }
 
 

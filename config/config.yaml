@@ -4,7 +4,7 @@ mode: paper  # paper | live | backtest
 timezone: Asia/Kolkata
 
 underlying: NIFTY
-lot_size: 75  # NSE Nifty lot size - verify/update if NSE revises it
+lot_size: 65  # NSE Nifty lot size - confirmed live from scrip master (2026-08-16); verify/update if NSE revises it
 
 market_hours:
   open: "09:15"

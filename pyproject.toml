@@ -5,8 +5,9 @@ description = "Advanced automated Nifty options trading system on Angel One Smar
 requires-python = ">=3.11"
 dependencies = [
     "smartapi-python>=1.5.5",
+    "logzero>=1.7.0",
     "pyotp>=2.9.0",
-    "websocket-client>=1.8.0",
+    "websocket-client==1.6.4",  # pinned: smartapi-python's on_close callback signature breaks on newer versions
     "pandas>=2.2.0",
     "numpy>=1.26.0",
     "scipy>=1.13.0",

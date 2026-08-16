@@ -85,7 +85,7 @@ class AppConfig(BaseModel):
     mode: Mode = Mode.PAPER
     timezone: str = "Asia/Kolkata"
     underlying: str = "NIFTY"
-    lot_size: int = 75
+    lot_size: int = 65
     market_hours: MarketHoursConfig = MarketHoursConfig()
     square_off: SquareOffConfig = SquareOffConfig()
     risk: RiskConfig

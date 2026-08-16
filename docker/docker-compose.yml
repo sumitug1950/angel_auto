@@ -1,0 +1,40 @@
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: angel_auto
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../config/.env   # create this from config/.env.example first - real credentials, gitignored
+    volumes:
+      - ../config/config.yaml:/app/config/config.yaml:ro
+      - ../config/strategies.yaml:/app/config/strategies.yaml:ro
+      - angel_auto_data:/app/data_store   # SQLite DB, logs, scrip master cache - survives restarts
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  # Optional, for later: swap SQLite for Postgres without touching any model code (same
+  # SQLAlchemy models - just point database.url in config.yaml at this service and add
+  # psycopg2-binary to pyproject.toml). Left commented out; SQLite is the documented
+  # default for a single-VPS deployment - only bother with this if write contention or
+  # backup/replication needs actually show up.
+  # postgres:
+  #   image: postgres:16-alpine
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_DB: angel_auto
+  #     POSTGRES_USER: angel_auto
+  #     POSTGRES_PASSWORD: change_me
+  #   volumes:
+  #     - angel_auto_pgdata:/var/lib/postgresql/data
+
+volumes:
+  angel_auto_data:
+  # angel_auto_pgdata:

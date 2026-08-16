@@ -53,6 +53,34 @@ to version-control.
 
 Run tests with `.venv\Scripts\python.exe -m pytest tests\ -v`.
 
+## Deployment (VPS)
+
+`docker/Dockerfile` + `docker/docker-compose.yml` are written and internally consistent
+(paths, relative config/DB locations, health check) but **not build-tested here** - this
+dev machine doesn't have Docker, and the real target is a Linux VPS anyway. Verify on the
+actual VPS before trusting it:
+
+```bash
+git clone <your-repo> && cd angel_auto
+cp config/.env.example config/.env
+nano config/.env            # fill in real credentials
+cd docker
+docker compose build
+docker compose up -d
+docker compose logs -f      # watch startup - login, WS connect, VIX bootstrap, etc.
+curl http://localhost:8000/health
+```
+
+`config/.env` and the `angel_auto_data` volume (SQLite DB, logs, scrip master cache) are
+mounted at runtime, not baked into the image - `docker compose down` doesn't lose data,
+and updating code is `git pull && docker compose up -d --build`.
+
+Put nginx in front for TLS + basic auth before exposing this beyond localhost - the
+dashboard can place real orders once `mode: live` is armed, so it shouldn't sit on the
+open internet unauthenticated. See `docker/nginx.conf.example` for a starting point
+(certbot for TLS, htpasswd for basic auth - both need your actual domain, so this couldn't
+be fully wired up without it).
+
 ## Going live
 
 `mode: paper` in `config.yaml` is the only mode that should be used until the strategy has

@@ -112,6 +112,27 @@ function fmtRs(v) {
   return sign + "₹" + Math.abs(v).toFixed(0);
 }
 
+// --- Trade markers on the price chart (which strategy entered/exited, and when) --------
+
+const STRATEGY_COLORS = { atm_sell_macd_zero: "#ef4444", itm4_buy_macd_zero: "#22c55e" };
+const STRATEGY_LABELS = { atm_sell_macd_zero: "ATM Sell", itm4_buy_macd_zero: "ITM4 Buy" };
+const closedMarkersByStrategy = { atm_sell_macd_zero: [], itm4_buy_macd_zero: [] };
+const openMarkerByStrategy = { atm_sell_macd_zero: null, itm4_buy_macd_zero: null };
+
+function isoToUnixSec(iso) {
+  return Math.floor(new Date(iso).getTime() / 1000);
+}
+
+function updateChartMarkers() {
+  if (!priceSeries) return;
+  const all = [
+    ...closedMarkersByStrategy.atm_sell_macd_zero,
+    ...closedMarkersByStrategy.itm4_buy_macd_zero,
+    ...Object.values(openMarkerByStrategy).filter(Boolean),
+  ].sort((a, b) => a.time - b.time);
+  priceSeries.setMarkers(all);
+}
+
 function applyStatus(data) {
   if (data.error) return;
   el("mode-badge").textContent = "mode: " + data.mode;
@@ -156,15 +177,30 @@ function applyStatus(data) {
   if (data.zero_cross) {
     Object.entries(data.zero_cross).forEach(([name, zc]) => {
       const statusEl = el("zc-status-" + name);
-      if (!statusEl) return;
-      if (zc.open_position) {
-        statusEl.textContent = "Position: ACTIVE (" + zc.open_position.direction + ") | Unrealized: " + fmtRs(zc.unrealized_pnl_rs);
-        statusEl.className = "position-status active";
+      if (statusEl) {
+        if (zc.open_position) {
+          statusEl.textContent = "Position: ACTIVE (" + zc.open_position.direction + ") | Unrealized: " + fmtRs(zc.unrealized_pnl_rs);
+          statusEl.className = "position-status active";
+        } else {
+          statusEl.textContent = "Position: NONE";
+          statusEl.className = "position-status";
+        }
+      }
+
+      const leg = zc.open_position && zc.open_position.legs && zc.open_position.legs[0];
+      if (zc.open_position && leg && zc.open_position.entry_time) {
+        openMarkerByStrategy[name] = {
+          time: isoToUnixSec(zc.open_position.entry_time),
+          position: "belowBar",
+          color: STRATEGY_COLORS[name],
+          shape: leg.side === "BUY" ? "arrowUp" : "arrowDown",
+          text: STRATEGY_LABELS[name] + " Entry",
+        };
       } else {
-        statusEl.textContent = "Position: NONE";
-        statusEl.className = "position-status";
+        openMarkerByStrategy[name] = null;
       }
     });
+    updateChartMarkers();
   }
 }
 
@@ -252,6 +288,31 @@ async function refreshZeroCrossTrades(name) {
     " | Gross: " + fmtRs(summary.gross_pnl_rs) +
     " | Charges: " + fmtRs(summary.charges_rs) +
     " | Net: " + fmtRs(summary.net_pnl_rs);
+
+  const markers = [];
+  trades.forEach((t) => {
+    const leg = (t.legs && t.legs[0]) || {};
+    if (t.entry_time) {
+      markers.push({
+        time: isoToUnixSec(t.entry_time),
+        position: "belowBar",
+        color: STRATEGY_COLORS[name],
+        shape: leg.side === "BUY" ? "arrowUp" : "arrowDown",
+        text: STRATEGY_LABELS[name] + " Entry",
+      });
+    }
+    if (t.exit_time) {
+      markers.push({
+        time: isoToUnixSec(t.exit_time),
+        position: "aboveBar",
+        color: STRATEGY_COLORS[name],
+        shape: leg.side === "BUY" ? "arrowDown" : "arrowUp",  // exit is the opposite action of entry
+        text: STRATEGY_LABELS[name] + " Exit (" + (t.exit_reason || "") + ")",
+      });
+    }
+  });
+  closedMarkersByStrategy[name] = markers;
+  updateChartMarkers();
 }
 
 function refreshAllZeroCrossTrades() {

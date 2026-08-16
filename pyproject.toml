@@ -30,6 +30,7 @@ dev = [
     "pytest>=8.2.0",
     "pytest-asyncio>=0.23.0",
     "freezegun>=1.5.0",
+    "httpx2",  # starlette.testclient's HTTP transport dependency in this environment
 ]
 
 [build-system]

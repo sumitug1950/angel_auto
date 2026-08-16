@@ -336,6 +336,35 @@ def get_open_position() -> dict | None:
         }
 
 
+def list_recent_positions(limit: int = 50) -> list[dict]:
+    """Closed positions, most recent first - the dashboard trade log."""
+    with session_scope() as session:
+        positions = session.scalars(
+            select(Position)
+            .where(Position.status == PositionStatus.CLOSED)
+            .order_by(Position.exit_time.desc())
+            .limit(limit)
+        ).all()
+        return [
+            {
+                "id": p.id,
+                "direction": p.direction,
+                "structure_type": p.structure_type,
+                "expiry": p.expiry,
+                "entry_time": p.entry_time,
+                "exit_time": p.exit_time,
+                "exit_reason": p.exit_reason,
+                "realized_pnl_rs": p.realized_pnl_rs,
+                "iv_rank_at_entry": p.iv_rank_at_entry,
+                "legs": [
+                    {"role": leg.role, "strike": leg.strike, "option_type": leg.option_type, "side": leg.side}
+                    for leg in p.legs
+                ],
+            }
+            for p in positions
+        ]
+
+
 # --- Equity curve -------------------------------------------------------
 
 
@@ -348,3 +377,17 @@ def append_equity_point(realized_pnl_rs: float, unrealized_pnl_rs: float, total_
                 total_equity_rs=total_equity_rs,
             )
         )
+
+
+def get_equity_curve(limit: int = 500) -> list[dict]:
+    with session_scope() as session:
+        points = session.scalars(select(EquityCurve).order_by(EquityCurve.timestamp.desc()).limit(limit)).all()
+        return [
+            {
+                "timestamp": p.timestamp,
+                "realized_pnl_rs": p.realized_pnl_rs,
+                "unrealized_pnl_rs": p.unrealized_pnl_rs,
+                "total_equity_rs": p.total_equity_rs,
+            }
+            for p in reversed(points)
+        ]

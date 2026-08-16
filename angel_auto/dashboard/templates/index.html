@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>angel_auto dashboard</title>
+<link rel="stylesheet" href="/static/style.css" />
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+</head>
+<body>
+  <header>
+    <h1>angel_auto</h1>
+    <div class="status-bar">
+      <span id="mode-badge" class="badge">mode: --</span>
+      <span id="market-badge" class="badge">market: --</span>
+      <span id="spot-value">Spot: --</span>
+      <span id="vix-value">VIX: --</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="card" id="controls">
+      <h2>Manual Control</h2>
+      <div class="control-row">
+        <button id="btn-long" class="btn btn-long">Long (Upar)</button>
+        <button id="btn-short" class="btn btn-short">Short (Niche)</button>
+      </div>
+      <div id="pending-box" class="pending-box hidden">
+        <span id="pending-text"></span>
+        <button id="btn-cancel-pending" class="btn btn-small">Cancel</button>
+      </div>
+      <div class="control-row">
+        <button id="btn-exit-now" class="btn btn-warning">Exit Now</button>
+        <button id="btn-kill-switch" class="btn btn-danger">Kill Switch</button>
+      </div>
+    </section>
+
+    <section class="card" id="position-card">
+      <h2>Current Position</h2>
+      <div id="position-content">
+        <p class="muted">No open position.</p>
+      </div>
+    </section>
+
+    <section class="card" id="daily-card">
+      <h2>Today</h2>
+      <table id="daily-table">
+        <tr><td>Trades taken</td><td id="daily-trades">--</td></tr>
+        <tr><td>Realized P&amp;L</td><td id="daily-pnl">--</td></tr>
+        <tr><td>Consecutive losses</td><td id="daily-losses">--</td></tr>
+        <tr><td>Trading halted</td><td id="daily-halted">--</td></tr>
+      </table>
+    </section>
+
+    <section class="card" id="equity-card">
+      <h2>Equity Curve</h2>
+      <canvas id="equity-chart" height="80"></canvas>
+      <button id="btn-refresh-equity" class="btn btn-small">Refresh</button>
+    </section>
+
+    <section class="card" id="trades-card">
+      <h2>Trade Log</h2>
+      <button id="btn-refresh-trades" class="btn btn-small">Refresh</button>
+      <table id="trades-table">
+        <thead>
+          <tr><th>Time</th><th>Dir</th><th>Structure</th><th>Expiry</th><th>Exit reason</th><th>P&amp;L</th></tr>
+        </thead>
+        <tbody id="trades-body"></tbody>
+      </table>
+    </section>
+
+    <section class="card" id="logs-card">
+      <h2>Logs</h2>
+      <button id="btn-refresh-logs" class="btn btn-small">Refresh</button>
+      <pre id="log-view"></pre>
+    </section>
+  </main>
+
+<script>
+const el = (id) => document.getElementById(id);
+
+function fmtRs(v) {
+  if (v === null || v === undefined) return "--";
+  const sign = v < 0 ? "-" : "";
+  return sign + "₹" + Math.abs(v).toFixed(0);
+}
+
+function applyStatus(data) {
+  if (data.error) return;
+  el("mode-badge").textContent = "mode: " + data.mode;
+  el("market-badge").textContent = "market: " + (data.market_open ? "OPEN" : "CLOSED");
+  el("market-badge").className = "badge " + (data.market_open ? "badge-open" : "badge-closed");
+  el("spot-value").textContent = "Spot: " + (data.spot ? data.spot.toFixed(2) : "--");
+  el("vix-value").textContent = "VIX: " + (data.vix ? data.vix.toFixed(2) : "--");
+
+  const ds = data.daily_state || {};
+  el("daily-trades").textContent = (ds.trades_taken ?? "--") + " / 2";
+  el("daily-pnl").textContent = fmtRs(ds.realized_pnl_rs);
+  el("daily-losses").textContent = ds.consecutive_losses ?? "--";
+  el("daily-halted").textContent = ds.trading_halted ? ("YES - " + (ds.halt_reason || "")) : "no";
+
+  const pending = data.pending_request;
+  if (pending) {
+    el("pending-box").classList.remove("hidden");
+    el("pending-text").textContent = "Pending: " + pending.direction + " (waiting for MACD confirmation)";
+  } else {
+    el("pending-box").classList.add("hidden");
+  }
+
+  const pos = data.open_position;
+  const posContent = el("position-content");
+  if (pos) {
+    let legsHtml = pos.legs.map(l =>
+      `<tr><td>${l.role}</td><td>${l.option_type}</td><td>${l.strike}</td><td>${l.side}</td><td>${l.entry_price ?? "not filled"}</td></tr>`
+    ).join("");
+    posContent.innerHTML = `
+      <p><strong>${pos.direction}</strong> / ${pos.structure_type} / expiry ${pos.expiry} / status ${pos.status}</p>
+      <p>Unrealized P&amp;L: <strong class="${data.unrealized_pnl_rs >= 0 ? 'pos' : 'neg'}">${fmtRs(data.unrealized_pnl_rs)}</strong></p>
+      <p>Trailing active: ${pos.trail_active ? "yes (peak " + fmtRs(pos.peak_profit_rs) + ")" : "no"}</p>
+      <table><thead><tr><th>Role</th><th>Type</th><th>Strike</th><th>Side</th><th>Entry</th></tr></thead>
+      <tbody>${legsHtml}</tbody></table>
+    `;
+  } else {
+    posContent.innerHTML = '<p class="muted">No open position.</p>';
+  }
+}
+
+function connectWs() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const ws = new WebSocket(proto + "//" + location.host + "/ws/status");
+  ws.onmessage = (evt) => applyStatus(JSON.parse(evt.data));
+  ws.onclose = () => setTimeout(connectWs, 2000);
+  ws.onerror = () => ws.close();
+}
+connectWs();
+
+async function postAction(url, body) {
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return resp.json();
+}
+
+el("btn-long").onclick = () => postAction("/api/direction", { direction: "LONG" });
+el("btn-short").onclick = () => postAction("/api/direction", { direction: "SHORT" });
+el("btn-cancel-pending").onclick = () => postAction("/api/cancel-pending");
+el("btn-exit-now").onclick = () => {
+  if (confirm("Exit current position now, regardless of P&L?")) postAction("/api/exit-now");
+};
+el("btn-kill-switch").onclick = () => {
+  if (confirm("Kill switch: halt trading and force-exit any open position?")) postAction("/api/kill-switch");
+};
+
+let equityChart = null;
+async function refreshEquity() {
+  const points = await (await fetch("/api/equity-curve")).json();
+  const labels = points.map(p => new Date(p.timestamp).toLocaleTimeString());
+  const values = points.map(p => p.total_equity_rs);
+  if (equityChart) {
+    equityChart.data.labels = labels;
+    equityChart.data.datasets[0].data = values;
+    equityChart.update();
+  } else {
+    equityChart = new Chart(el("equity-chart"), {
+      type: "line",
+      data: { labels, datasets: [{ label: "Equity (Rs)", data: values, borderColor: "#3b82f6", tension: 0.15 }] },
+      options: { responsive: true, plugins: { legend: { display: false } } },
+    });
+  }
+}
+el("btn-refresh-equity").onclick = refreshEquity;
+refreshEquity();
+
+async function refreshTrades() {
+  const trades = await (await fetch("/api/trades")).json();
+  el("trades-body").innerHTML = trades.map(t => `
+    <tr>
+      <td>${t.exit_time ? new Date(t.exit_time).toLocaleString() : "--"}</td>
+      <td>${t.direction}</td>
+      <td>${t.structure_type}</td>
+      <td>${t.expiry}</td>
+      <td>${t.exit_reason ?? "--"}</td>
+      <td class="${t.realized_pnl_rs >= 0 ? 'pos' : 'neg'}">${fmtRs(t.realized_pnl_rs)}</td>
+    </tr>
+  `).join("");
+}
+el("btn-refresh-trades").onclick = refreshTrades;
+refreshTrades();
+
+async function refreshLogs() {
+  const data = await (await fetch("/api/logs")).json();
+  el("log-view").textContent = (data.lines || []).join("");
+  const view = el("log-view");
+  view.scrollTop = view.scrollHeight;
+}
+el("btn-refresh-logs").onclick = refreshLogs;
+refreshLogs();
+</script>
+</body>
+</html>

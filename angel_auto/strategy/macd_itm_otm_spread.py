@@ -228,7 +228,9 @@ class MacdItmOtmSpreadStrategy(Strategy):
 
     # --- Exit evaluation -------------------------------------------------
 
-    def _position_pnl_rs(self, open_position: dict) -> float:
+    def position_pnl_rs(self, open_position: dict) -> float:
+        """Live unrealized P&L for the given open position dict (as returned by
+        journal.get_open_position()). Public - the dashboard's /api/status uses this too."""
         total = 0.0
         for leg in open_position["legs"]:
             quote = self.option_chain.get(leg["token"])
@@ -239,6 +241,9 @@ class MacdItmOtmSpreadStrategy(Strategy):
             else:
                 total += (leg["entry_price"] - quote.ltp) * leg["quantity"]
         return total
+
+    def _position_pnl_rs(self, open_position: dict) -> float:
+        return self.position_pnl_rs(open_position)
 
     def _check_exit(self, open_position: dict, macd_df) -> ExitIntent | None:
         pnl = self._position_pnl_rs(open_position)

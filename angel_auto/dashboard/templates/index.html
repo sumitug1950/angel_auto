@@ -21,6 +21,12 @@
     <section class="card" id="controls">
       <h2>Manual Control</h2>
       <div class="control-row">
+        <button id="btn-buying" class="btn btn-buying">Buying</button>
+        <button id="btn-selling" class="btn btn-selling">Selling</button>
+      </div>
+      <p id="structure-status" class="position-status">Structure preference: --</p>
+
+      <div class="control-row">
         <button id="btn-long" class="btn btn-long">Long (Upar)</button>
         <button id="btn-short" class="btn btn-short">Short (Niche)</button>
       </div>
@@ -29,12 +35,6 @@
         <button id="btn-cancel-pending" class="btn btn-small">Cancel</button>
       </div>
       <p id="position-status" class="position-status">Position: --</p>
-
-      <div class="control-row">
-        <button id="btn-buying" class="btn btn-buying">Buying</button>
-        <button id="btn-selling" class="btn btn-selling">Selling</button>
-      </div>
-      <p id="structure-status" class="position-status">Structure preference: --</p>
 
       <div class="control-row">
         <button id="btn-exit-now" class="btn btn-warning">Exit Now</button>
@@ -98,6 +98,17 @@ function applyStatus(data) {
   const structureEl = el("structure-status");
   structureEl.textContent = "Structure preference: " + (data.structure_preference || "--") +
     " (applied at next entry - a VIX spike can still override it)";
+
+  // highlight whichever of Buying/Selling is currently active
+  el("btn-buying").classList.toggle("selected", data.structure_preference === "DEBIT");
+  el("btn-selling").classList.toggle("selected", data.structure_preference === "CREDIT");
+
+  // Long/Short always end up as one specific option type once combined with the current
+  // structure preference (DEBIT: Long->CE/Short->PE, CREDIT: Long->PE/Short->CE) - show
+  // that directly on the button so it's never a guess.
+  const isCredit = data.structure_preference === "CREDIT";
+  el("btn-long").textContent = "Long (" + (isCredit ? "Put" : "Call") + ")";
+  el("btn-short").textContent = "Short (" + (isCredit ? "Call" : "Put") + ")";
 }
 
 function connectWs() {

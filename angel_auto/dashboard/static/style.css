@@ -86,8 +86,16 @@ main {
 }
 .btn-long { background: var(--green); color: #06210f; }
 .btn-short { background: var(--red); color: #2a0808; }
+.btn-buying, .btn-selling {
+  opacity: 0.5;
+  transition: opacity 0.15s ease, box-shadow 0.15s ease;
+}
 .btn-buying { background: var(--blue); color: #06121f; }
 .btn-selling { background: #7c3aed; color: #f5f0ff; }
+.btn-buying.selected, .btn-selling.selected {
+  opacity: 1;
+  box-shadow: 0 0 0 3px var(--text);
+}
 .btn-warning { background: var(--amber); color: #2a1c02; }
 .btn-danger { background: #7f1d1d; color: #fff; }
 .btn-small { flex: none; padding: 0.3rem 0.7rem; font-size: 0.8rem; background: var(--border); color: var(--text); margin-top: 0.5rem; }

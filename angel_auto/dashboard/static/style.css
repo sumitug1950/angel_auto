@@ -69,6 +69,21 @@ main {
   font-weight: 600;
   font-size: 0.95rem;
 }
+
+.position-status {
+  margin: 0.5rem 0;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  background: var(--border);
+  color: var(--muted);
+  font-weight: 600;
+  text-align: center;
+}
+.position-status.active {
+  background: #14301c;
+  color: var(--green);
+  border: 1px solid var(--green);
+}
 .btn-long { background: var(--green); color: #06210f; }
 .btn-short { background: var(--red); color: #2a0808; }
 .btn-warning { background: var(--amber); color: #2a1c02; }

@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>angel_auto dashboard</title>
 <link rel="stylesheet" href="/static/style.css" />
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 </head>
 <body>
   <header>
@@ -29,33 +28,11 @@
         <span id="pending-text"></span>
         <button id="btn-cancel-pending" class="btn btn-small">Cancel</button>
       </div>
+      <p id="position-status" class="position-status">Position: --</p>
       <div class="control-row">
         <button id="btn-exit-now" class="btn btn-warning">Exit Now</button>
         <button id="btn-kill-switch" class="btn btn-danger">Kill Switch</button>
       </div>
-    </section>
-
-    <section class="card" id="position-card">
-      <h2>Current Position</h2>
-      <div id="position-content">
-        <p class="muted">No open position.</p>
-      </div>
-    </section>
-
-    <section class="card" id="daily-card">
-      <h2>Today</h2>
-      <table id="daily-table">
-        <tr><td>Trades taken</td><td id="daily-trades">--</td></tr>
-        <tr><td>Realized P&amp;L</td><td id="daily-pnl">--</td></tr>
-        <tr><td>Consecutive losses</td><td id="daily-losses">--</td></tr>
-        <tr><td>Trading halted</td><td id="daily-halted">--</td></tr>
-      </table>
-    </section>
-
-    <section class="card" id="equity-card">
-      <h2>Equity Curve</h2>
-      <canvas id="equity-chart" height="80"></canvas>
-      <button id="btn-refresh-equity" class="btn btn-small">Refresh</button>
     </section>
 
     <section class="card" id="trades-card">
@@ -93,12 +70,6 @@ function applyStatus(data) {
   el("spot-value").textContent = "Spot: " + (data.spot ? data.spot.toFixed(2) : "--");
   el("vix-value").textContent = "VIX: " + (data.vix ? data.vix.toFixed(2) : "--");
 
-  const ds = data.daily_state || {};
-  el("daily-trades").textContent = (ds.trades_taken ?? "--") + " / 2";
-  el("daily-pnl").textContent = fmtRs(ds.realized_pnl_rs);
-  el("daily-losses").textContent = ds.consecutive_losses ?? "--";
-  el("daily-halted").textContent = ds.trading_halted ? ("YES - " + (ds.halt_reason || "")) : "no";
-
   const pending = data.pending_request;
   if (pending) {
     el("pending-box").classList.remove("hidden");
@@ -108,20 +79,13 @@ function applyStatus(data) {
   }
 
   const pos = data.open_position;
-  const posContent = el("position-content");
+  const statusEl = el("position-status");
   if (pos) {
-    let legsHtml = pos.legs.map(l =>
-      `<tr><td>${l.role}</td><td>${l.option_type}</td><td>${l.strike}</td><td>${l.side}</td><td>${l.entry_price ?? "not filled"}</td></tr>`
-    ).join("");
-    posContent.innerHTML = `
-      <p><strong>${pos.direction}</strong> / ${pos.structure_type} / expiry ${pos.expiry} / status ${pos.status}</p>
-      <p>Unrealized P&amp;L: <strong class="${data.unrealized_pnl_rs >= 0 ? 'pos' : 'neg'}">${fmtRs(data.unrealized_pnl_rs)}</strong></p>
-      <p>Trailing active: ${pos.trail_active ? "yes (peak " + fmtRs(pos.peak_profit_rs) + ")" : "no"}</p>
-      <table><thead><tr><th>Role</th><th>Type</th><th>Strike</th><th>Side</th><th>Entry</th></tr></thead>
-      <tbody>${legsHtml}</tbody></table>
-    `;
+    statusEl.textContent = "Position: ACTIVE (" + pos.direction + ")";
+    statusEl.className = "position-status active";
   } else {
-    posContent.innerHTML = '<p class="muted">No open position.</p>';
+    statusEl.textContent = "Position: NONE";
+    statusEl.className = "position-status";
   }
 }
 
@@ -152,26 +116,6 @@ el("btn-exit-now").onclick = () => {
 el("btn-kill-switch").onclick = () => {
   if (confirm("Kill switch: halt trading and force-exit any open position?")) postAction("/api/kill-switch");
 };
-
-let equityChart = null;
-async function refreshEquity() {
-  const points = await (await fetch("/api/equity-curve")).json();
-  const labels = points.map(p => new Date(p.timestamp).toLocaleTimeString());
-  const values = points.map(p => p.total_equity_rs);
-  if (equityChart) {
-    equityChart.data.labels = labels;
-    equityChart.data.datasets[0].data = values;
-    equityChart.update();
-  } else {
-    equityChart = new Chart(el("equity-chart"), {
-      type: "line",
-      data: { labels, datasets: [{ label: "Equity (Rs)", data: values, borderColor: "#3b82f6", tension: 0.15 }] },
-      options: { responsive: true, plugins: { legend: { display: false } } },
-    });
-  }
-}
-el("btn-refresh-equity").onclick = refreshEquity;
-refreshEquity();
 
 async function refreshTrades() {
   const trades = await (await fetch("/api/trades")).json();

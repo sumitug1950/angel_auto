@@ -216,11 +216,13 @@ class MacdItmOtmSpreadStrategy(Strategy):
         return [
             LegIntent(
                 option_type=option_type, strike=itm_quote.strike, role="ITM", side=itm_side,
-                token=itm_quote.token, trading_symbol=itm_quote.trading_symbol, delta_at_selection=itm_quote.delta,
+                token=itm_quote.token, trading_symbol=itm_quote.trading_symbol, quantity=quantity,
+                delta_at_selection=itm_quote.delta,
             ),
             LegIntent(
                 option_type=option_type, strike=otm_quote.strike, role="OTM", side=otm_side,
-                token=otm_quote.token, trading_symbol=otm_quote.trading_symbol, delta_at_selection=otm_quote.delta,
+                token=otm_quote.token, trading_symbol=otm_quote.trading_symbol, quantity=quantity,
+                delta_at_selection=otm_quote.delta,
             ),
         ]
 

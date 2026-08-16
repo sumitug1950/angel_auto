@@ -39,6 +39,7 @@ class OrderRequest:
 class OrderResult:
     broker_order_id: str
     status: OrderStatus
+    fill_price: float | None = None  # set when status == FILLED
     message: str = ""
 
 

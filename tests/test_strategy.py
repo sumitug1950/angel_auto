@@ -294,6 +294,8 @@ def test_strike_selection_picks_closest_delta_and_correct_sides_for_debit():
     assert otm.strike == 25100.0  # delta 0.10 exactly
     assert itm.side == OrderSide.BUY
     assert otm.side == OrderSide.SELL
+    assert itm.quantity == LOT_SIZE  # sizing.lots defaults to 1
+    assert otm.quantity == LOT_SIZE
 
 
 def test_strike_selection_sides_flip_for_credit():

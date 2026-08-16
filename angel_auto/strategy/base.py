@@ -20,6 +20,7 @@ class LegIntent:
     side: OrderSide
     token: str
     trading_symbol: str
+    quantity: int
     delta_at_selection: float | None = None
 
 

@@ -68,6 +68,7 @@ class OptionQuote:
     trading_symbol: str
     strike: float
     option_type: str  # "CE" | "PE"
+    expiry: str = ""  # "DDMMMYYYY" - required for quotes_for_type_and_expiry filtering
     ltp: float = 0.0
     iv: float | None = None
     delta: float | None = None
@@ -75,14 +76,24 @@ class OptionQuote:
 
 class OptionChainSnapshot:
     """Live per-strike LTP/IV/delta. `register()` once per token (from the instrument
-    master), then `update_ltp()` on every tick and `refresh_greeks()` periodically."""
+    master), then `update_ltp()` on every tick and `refresh_greeks()` periodically.
+
+    Can hold quotes for more than one expiry at once (the backtest engine registers both
+    the DEBIT-relevant monthly and CREDIT-relevant nearest expiry up front, since it
+    doesn't know which the strategy will pick until it decides). Strike selection MUST
+    filter by expiry, not just option_type - two different expiries can share the same
+    strike, and without filtering, a position's ITM and OTM legs could silently end up on
+    two different contracts entirely (found via a real backtest run producing exactly
+    that: an ITM leg on the monthly expiry and an OTM leg on the nearest expiry).
+    """
 
     def __init__(self) -> None:
         self._quotes: dict[str, OptionQuote] = {}
 
-    def register(self, token: str, trading_symbol: str, strike: float, option_type: str) -> None:
+    def register(self, token: str, trading_symbol: str, strike: float, option_type: str, expiry: str = "") -> None:
         self._quotes.setdefault(
-            token, OptionQuote(token=token, trading_symbol=trading_symbol, strike=strike, option_type=option_type)
+            token,
+            OptionQuote(token=token, trading_symbol=trading_symbol, strike=strike, option_type=option_type, expiry=expiry),
         )
 
     def update_ltp(self, token: str, ltp: float) -> None:
@@ -98,6 +109,9 @@ class OptionChainSnapshot:
 
     def quotes_for_type(self, option_type: str) -> list[OptionQuote]:
         return [q for q in self._quotes.values() if q.option_type == option_type]
+
+    def quotes_for_type_and_expiry(self, option_type: str, expiry: str) -> list[OptionQuote]:
+        return [q for q in self._quotes.values() if q.option_type == option_type and q.expiry == expiry]
 
 
 def refresh_option_chain_greeks(

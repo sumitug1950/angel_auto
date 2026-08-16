@@ -19,6 +19,7 @@ risking a blind MARKET print on a thin strike), MARKET for every software-trigge
 from __future__ import annotations
 
 import time
+from datetime import date
 
 from angel_auto.broker.base import BrokerAdapter, OrderRequest
 from angel_auto.core.enums import ExitReason, OrderSide, OrderStatus, PositionStatus, StructureType
@@ -49,8 +50,10 @@ class OrderManager:
 
     # --- Entry --------------------------------------------------------------
 
-    def execute_entry(self, intent: EntryIntent) -> int | None:
-        """Returns the new position's id on success, None if the entry was aborted."""
+    def execute_entry(self, intent: EntryIntent, trade_date: date | None = None) -> int | None:
+        """Returns the new position's id on success, None if the entry was aborted.
+        `trade_date` defaults to real today; the backtest engine passes its simulated day
+        so the daily trade-count counter scopes to the day being replayed."""
         position_id = journal.create_position(
             intent.direction,
             intent.structure_type,
@@ -92,7 +95,7 @@ class OrderManager:
             journal.update_leg_fill(second_leg_id, entry_price=second_fill)
 
         journal.update_position_status(position_id, PositionStatus.OPEN, set_entry_time=True)
-        journal.increment_daily_trade_count()
+        journal.increment_daily_trade_count(trade_date)
         log.info("entry_executed", position_id=position_id, structure=intent.structure_type.value)
         return position_id
 
@@ -188,7 +191,10 @@ class OrderManager:
         intent: ExitIntent,
         daily_loss_limit_rs: float,
         max_consecutive_losses: int,
+        trade_date: date | None = None,
     ) -> None:
+        """`trade_date` defaults to real today; the backtest engine passes its simulated
+        day so realized P&L and the circuit breaker scope to the day being replayed."""
         open_position = journal.get_open_position()
         if open_position is None:
             log.warning("execute_exit_called_with_nothing_open", reason=intent.reason.value)
@@ -209,10 +215,10 @@ class OrderManager:
             else:
                 realized_pnl += (entry_price - fill_price) * leg["quantity"]
 
-        journal.close_position(open_position["id"], intent.reason, realized_pnl)
+        journal.close_position(open_position["id"], intent.reason, realized_pnl, trade_date)
         log.info("exit_executed", position_id=open_position["id"], reason=intent.reason.value, realized_pnl_rs=realized_pnl)
 
-        circuit_breaker.evaluate_after_trade_close(daily_loss_limit_rs, max_consecutive_losses)
+        circuit_breaker.evaluate_after_trade_close(daily_loss_limit_rs, max_consecutive_losses, trade_date)
 
     def _place_exit_leg(self, leg: dict) -> float | None:
         opposite_side = OrderSide.SELL if leg["side"] == OrderSide.BUY else OrderSide.BUY

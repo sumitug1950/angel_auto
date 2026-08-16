@@ -47,7 +47,7 @@ def _seed_option_chain(instruments: InstrumentMaster, expiry: str, strikes: list
     """deltas: {(strike, "CE"|"PE"): delta_value}. Registers + sets ltp/delta for each."""
     chain = OptionChainSnapshot()
     for inst in instruments.option_chain(UNDERLYING, expiry):
-        chain.register(inst.token, inst.symbol, inst.strike, inst.symbol[-2:])
+        chain.register(inst.token, inst.symbol, inst.strike, inst.symbol[-2:], expiry=expiry)
         key = (inst.strike, inst.symbol[-2:])
         if key in deltas:
             chain.update_ltp(inst.token, 100.0)  # any positive placeholder price

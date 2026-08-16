@@ -79,7 +79,7 @@ def build_subscription_tokens(
         if abs(inst.strike - center_strike) > band_points:
             continue
         option_type = inst.symbol[-2:]
-        option_chain.register(inst.token, inst.symbol, inst.strike, option_type)
+        option_chain.register(inst.token, inst.symbol, inst.strike, option_type, expiry=inst.expiry)
         tokens.append(inst.token)
     return tokens
 

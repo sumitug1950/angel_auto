@@ -16,6 +16,8 @@ here) - this module only ever reads the persisted position state, never assumes 
 """
 from __future__ import annotations
 
+from datetime import date
+
 from angel_auto.analytics.indicators import compute_macd, current_state, detect_crossover
 from angel_auto.analytics.iv_rank import compute_iv_rank
 from angel_auto.core.enums import (
@@ -50,6 +52,7 @@ class MacdItmOtmSpreadStrategy(Strategy):
         bar_aggregator: BarAggregator,
         option_chain: OptionChainSnapshot,
         get_current_vix,  # Callable[[], float]
+        get_today=date.today,  # Callable[[], date] - injectable so backtest can drive its own clock
     ) -> None:
         self.config = config
         self.underlying = underlying
@@ -59,6 +62,7 @@ class MacdItmOtmSpreadStrategy(Strategy):
         self.bars = bar_aggregator
         self.option_chain = option_chain
         self.get_current_vix = get_current_vix
+        self.get_today = get_today
 
     # --- MACD helpers ---------------------------------------------------
 
@@ -129,7 +133,7 @@ class MacdItmOtmSpreadStrategy(Strategy):
     # --- Entry construction ------------------------------------------------
 
     def _try_execute_entry(self, direction: Direction, direction_request_id: int) -> EntryIntent | None:
-        pretrade = pretrade_checks.run_pretrade_checks(self.max_trades_per_day)
+        pretrade = pretrade_checks.run_pretrade_checks(self.max_trades_per_day, trade_date=self.get_today())
         if not pretrade.allowed:
             log.warning("entry_blocked_pretrade_check", reason=pretrade.reason)
             journal.resolve_direction_request(direction_request_id, PendingRequestStatus.CANCELLED)
@@ -166,7 +170,7 @@ class MacdItmOtmSpreadStrategy(Strategy):
     def _compute_iv_rank(self) -> float | None:
         try:
             current_vix = self.get_current_vix()
-            history = journal.get_vix_history(self.config.structure.iv_rank_lookback_days)
+            history = journal.get_vix_history(self.config.structure.iv_rank_lookback_days, as_of=self.get_today())
             return compute_iv_rank(current_vix, history)
         except Exception:  # not enough VIX history yet, or feed unavailable - fall back to DEBIT default
             return None
@@ -177,9 +181,10 @@ class MacdItmOtmSpreadStrategy(Strategy):
         return StructureType.DEBIT
 
     def _select_expiry(self, structure_type: StructureType) -> str:
+        today = self.get_today()
         if structure_type == StructureType.DEBIT:
-            return self.instruments.select_monthly_expiry(self.underlying, self.config.expiry.debit_min_days_gap)
-        return self.instruments.nearest_weekly_expiry(self.underlying)
+            return self.instruments.select_monthly_expiry(self.underlying, self.config.expiry.debit_min_days_gap, as_of=today)
+        return self.instruments.nearest_weekly_expiry(self.underlying, as_of=today)
 
     @staticmethod
     def _option_type_for(direction: Direction, structure_type: StructureType) -> OptionType:
@@ -195,7 +200,7 @@ class MacdItmOtmSpreadStrategy(Strategy):
 
         candidates = [
             q
-            for q in self.option_chain.quotes_for_type(option_type.value)
+            for q in self.option_chain.quotes_for_type_and_expiry(option_type.value, expiry)
             if q.strike in grid_strikes and q.delta is not None
         ]
         if not candidates:

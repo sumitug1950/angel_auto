@@ -29,6 +29,7 @@ CACHE_MAX_AGE_SEC = 24 * 60 * 60  # instruments/expiries roll daily-ish; re-down
 
 EXPECTED_NIFTY_SPOT_TOKEN = "26000"  # sanity-check only; the real value always comes from the master
 EXPECTED_INDIA_VIX_TOKEN = "99926017"  # sanity-check only; confirmed live from scrip master (2026-08-16)
+EXPECTED_NIFTY_SPOT_HISTORICAL_TOKEN = "99926000"  # sanity-check only; see nifty_spot_historical_instrument
 
 
 @dataclass(frozen=True)
@@ -116,6 +117,30 @@ class InstrumentMaster:
             log.warning(
                 "nifty_spot_token_mismatch",
                 expected=EXPECTED_NIFTY_SPOT_TOKEN,
+                actual=instrument.token,
+            )
+        return instrument
+
+    def nifty_spot_historical_instrument(self) -> Instrument:
+        """The 'Nifty 50' / AMXIDX token - NOT the same as nifty_spot_instrument()'s live-feed
+        token. Confirmed live (2026-08-16): getCandleData returns 0 rows for token 26000
+        (instrumenttype "") but 95 daily rows for token 99926000 (instrumenttype AMXIDX,
+        symbol "Nifty 50") over the same date range - Angel One apparently expects the
+        AMXIDX-style token for historical REST candles, same pattern as India VIX's
+        99926017. Used by backtest/data_loader.py, not the live tick subscription path."""
+        self._ensure_loaded()
+        candidates = [
+            inst
+            for inst in self._by_name_type_expiry.get(("NIFTY", "AMXIDX", ""), [])
+            if inst.exchange == "NSE"
+        ]
+        if not candidates:
+            raise LookupError("NIFTY historical-data instrument not found in scrip master")
+        instrument = candidates[0]
+        if instrument.token != EXPECTED_NIFTY_SPOT_HISTORICAL_TOKEN:
+            log.warning(
+                "nifty_spot_historical_token_mismatch",
+                expected=EXPECTED_NIFTY_SPOT_HISTORICAL_TOKEN,
                 actual=instrument.token,
             )
         return instrument

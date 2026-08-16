@@ -289,7 +289,9 @@ def update_trailing_peak(position_id: int, peak_profit_rs: float, trail_active: 
         position.trail_active = trail_active
 
 
-def close_position(position_id: int, exit_reason: ExitReason, realized_pnl_rs: float) -> None:
+def close_position(
+    position_id: int, exit_reason: ExitReason, realized_pnl_rs: float, trade_date: date | None = None
+) -> None:
     with session_scope() as session:
         position = session.get(Position, position_id)
         if position is None:
@@ -298,7 +300,7 @@ def close_position(position_id: int, exit_reason: ExitReason, realized_pnl_rs: f
         position.exit_time = _utcnow()
         position.exit_reason = exit_reason
         position.realized_pnl_rs = realized_pnl_rs
-    record_trade_pnl(realized_pnl_rs)
+    record_trade_pnl(realized_pnl_rs, trade_date)
 
 
 def get_open_position() -> dict | None:

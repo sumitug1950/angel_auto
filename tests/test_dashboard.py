@@ -59,7 +59,7 @@ class _FakeTradingApp:
         self.option_chain = OptionChainSnapshot()
         for strike, delta in CE_DELTAS.items():
             token = str(int(strike))
-            self.option_chain.register(token, f"NIFTY29SEP2026{int(strike)}CE", strike, "CE")
+            self.option_chain.register(token, f"NIFTY29SEP2026{int(strike)}CE", strike, "CE", expiry="29SEP2026")
             self.option_chain.update_ltp(token, 100.0)
             self.option_chain.get(token).delta = delta
 

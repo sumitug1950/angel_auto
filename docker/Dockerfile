@@ -9,12 +9,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install dependencies first (own layer) so code-only changes don't bust the pip cache.
+# angel_auto/ must exist BEFORE `pip install -e .` runs - setuptools' packages.find does
+# its package discovery at install time, so installing against a directory that doesn't
+# have angel_auto/ yet registers zero packages (found live: container built and started
+# fine, but every import failed with ModuleNotFoundError: No module named 'angel_auto').
 COPY pyproject.toml ./
+COPY angel_auto ./angel_auto
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -e .
 
-COPY angel_auto ./angel_auto
 COPY config/config.yaml config/strategies.yaml ./config/
 COPY scripts ./scripts
 

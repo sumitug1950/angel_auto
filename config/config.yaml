@@ -1,0 +1,41 @@
+# Global system config. Nothing sensitive here - credentials live in config/.env only.
+
+mode: paper  # paper | live | backtest
+timezone: Asia/Kolkata
+
+underlying: NIFTY
+lot_size: 75  # NSE Nifty lot size - verify/update if NSE revises it
+
+market_hours:
+  open: "09:15"
+  close: "15:30"
+
+square_off:
+  normal_time: "15:15"
+  expiry_day_time: "15:00"
+
+risk:
+  daily_loss_limit_rs: 8000       # ~ 2 trades x sl_amount_rs, hard ceiling for the day
+  max_consecutive_losses: 2
+  max_trades_per_day: 2
+  max_lots_per_trade: 1
+  max_concurrent_positions: 1
+  max_slippage_pct: 1.0
+  api_failure_threshold: 3
+  api_failure_window_sec: 60
+
+oms:
+  product_type: INTRADAY          # MIS - matches mandatory same-day square-off
+  entry_slippage_buffer_pts: 1.0  # marketable-limit buffer for entries
+  safety_net_sl_buffer_pts: 5.0   # buffer between trigger and limit price on the broker-side backup SL
+
+database:
+  url: "sqlite:///data_store/angel_auto.db"
+
+logging:
+  level: INFO
+  file: "data_store/logs/angel_auto.log"
+
+dashboard:
+  host: "0.0.0.0"
+  port: 8000

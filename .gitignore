@@ -1,0 +1,22 @@
+# secrets
+.env
+config/.env
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# data
+data_store/*
+!data_store/.gitkeep
+
+# logs
+*.log
+
+# os
+.DS_Store
+Thumbs.db

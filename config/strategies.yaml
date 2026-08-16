@@ -1,0 +1,36 @@
+# Per-strategy tunables. Registered strategies are looked up by name in strategy/registry.py.
+
+active_strategy: macd_itm_otm_spread
+
+strategies:
+  macd_itm_otm_spread:
+    class_path: "angel_auto.strategy.macd_itm_otm_spread.MacdItmOtmSpreadStrategy"
+
+    candle_interval_sec: 15   # ticks are aggregated into 15-sec OHLC candles for MACD
+
+    macd:
+      fast_period: 12
+      slow_period: 26
+      signal_period: 9
+
+    pending_request:
+      auto_cancel: false       # stays pending until confirmed, manually cancelled, or market close
+
+    structure:
+      default: DEBIT           # DEBIT (buy ITM + sell OTM) unless credit conditions below are met
+      credit_iv_rank_threshold: 50   # switch to CREDIT (short ITM + buy OTM hedge) only above this IV Rank
+      iv_rank_lookback_days: 90
+      iv_source: INDIA_VIX
+
+    strikes:
+      itm_delta_target: 0.7
+      otm_delta_target: 0.1
+
+    sizing:
+      lots: 1                  # fixed - no scaling formula
+
+    exit:
+      sl_amount_rs: 4000
+      risk_reward_ratio: 1.2   # target_amount_rs = sl_amount_rs * risk_reward_ratio = 4800
+      trail_gap_rs: 1000       # trailing stop = peak_profit - trail_gap_rs, once target is first reached
+      exit_on_opposite_macd: true

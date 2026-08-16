@@ -279,24 +279,73 @@ document.querySelectorAll('[data-action="kill-switch"]').forEach((btn) => {
 
 let priceChart, priceSeries, macdChart, macdLineSeries, signalLineSeries, histSeries;
 
+// Today's 09:15 IST as a unix-seconds timestamp - pinned as the chart's left edge so the
+// market-open candle never scrolls out of view as the day's ticks accumulate.
+function todayMarketOpenUnixSec() {
+  const now = new Date();
+  const istOpen = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 3, 45, 0)); // 09:15 IST = 03:45 UTC
+  return Math.floor(istOpen.getTime() / 1000);
+}
+
 function initCharts() {
+  const marketOpen = todayMarketOpenUnixSec();
+  const marketClose = marketOpen + 6.25 * 3600; // 09:15 -> 15:30
+
   const chartTheme = {
     layout: { background: { color: "#171a21" }, textColor: "#e6e8eb" },
-    grid: { vertLines: { color: "#2a2e38" }, horzLines: { color: "#2a2e38" } },
-    timeScale: { timeVisible: true, secondsVisible: true },
+    grid: { vertLines: { color: "#1c1f27" }, horzLines: { color: "#1c1f27" } },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    timeScale: { timeVisible: true, secondsVisible: true, fixLeftEdge: true, rightOffset: 4, borderColor: "#2a2e38" },
+    rightPriceScale: { borderColor: "#2a2e38" },
   };
 
   priceChart = LightweightCharts.createChart(el("price-chart"), chartTheme);
-  priceSeries = priceChart.addLineSeries({ color: "#3b82f6", lineWidth: 2, title: "Nifty Spot" });
+  priceSeries = priceChart.addAreaSeries({
+    lineColor: "#3b82f6", lineWidth: 2,
+    topColor: "rgba(59, 130, 246, 0.28)", bottomColor: "rgba(59, 130, 246, 0.02)",
+    title: "Nifty Spot", crosshairMarkerVisible: true, crosshairMarkerRadius: 4,
+    lastValueVisible: true, priceLineVisible: true, priceLineColor: "#3b82f6",
+  });
 
   macdChart = LightweightCharts.createChart(el("macd-chart"), chartTheme);
-  histSeries = macdChart.addHistogramSeries({ color: "#8a8f98" });
-  macdLineSeries = macdChart.addLineSeries({ color: "#3b82f6", lineWidth: 1, title: "MACD" });
-  signalLineSeries = macdChart.addLineSeries({ color: "#f59e0b", lineWidth: 1, title: "Signal" });
+  histSeries = macdChart.addHistogramSeries({ color: "#8a8f98", priceLineVisible: false });
+  macdLineSeries = macdChart.addLineSeries({ color: "#3b82f6", lineWidth: 2, title: "MACD", crosshairMarkerVisible: true });
+  signalLineSeries = macdChart.addLineSeries({ color: "#f59e0b", lineWidth: 1, title: "Signal", crosshairMarkerVisible: true });
   macdLineSeries.createPriceLine({
     price: 0, color: "#8a8f98", lineWidth: 1,
     lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: "zero",
   });
+
+  priceChart.timeScale().setVisibleRange({ from: marketOpen, to: marketClose });
+  macdChart.timeScale().setVisibleRange({ from: marketOpen, to: marketClose });
+
+  // Keep both charts' visible range and crosshair in lockstep, so hovering/scrolling one
+  // moves the other to the exact same moment in time.
+  let syncingRange = false;
+  const linkTimeScales = (a, b) => {
+    a.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+      if (syncingRange || !range) return;
+      syncingRange = true;
+      b.timeScale().setVisibleLogicalRange(range);
+      syncingRange = false;
+    });
+  };
+  linkTimeScales(priceChart, macdChart);
+  linkTimeScales(macdChart, priceChart);
+
+  const linkCrosshair = (source, sourceSeries, target, targetSeries) => {
+    source.subscribeCrosshairMove((param) => {
+      if (!param.time || !param.point) {
+        target.clearCrosshairPosition();
+        return;
+      }
+      const data = param.seriesData.get(sourceSeries);
+      const value = data ? (data.value ?? data.close ?? 0) : 0;
+      target.setCrosshairPosition(value, param.time, targetSeries);
+    });
+  };
+  linkCrosshair(priceChart, priceSeries, macdChart, macdLineSeries);
+  linkCrosshair(macdChart, macdLineSeries, priceChart, priceSeries);
 
   const resize = () => {
     priceChart.applyOptions({ width: el("price-chart").clientWidth });

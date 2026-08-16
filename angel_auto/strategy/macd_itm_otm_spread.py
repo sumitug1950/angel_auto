@@ -30,6 +30,7 @@ from angel_auto.data.instruments import InstrumentMaster
 from angel_auto.data.market_data import BarAggregator, OptionChainSnapshot
 from angel_auto.logging_conf import get_logger
 from angel_auto.persistence import journal
+from angel_auto.risk import pretrade as pretrade_checks
 from angel_auto.settings import StrategyConfig
 from angel_auto.strategy.base import EntryIntent, ExitIntent, LegIntent, Strategy
 
@@ -128,13 +129,9 @@ class MacdItmOtmSpreadStrategy(Strategy):
     # --- Entry construction ------------------------------------------------
 
     def _try_execute_entry(self, direction: Direction, direction_request_id: int) -> EntryIntent | None:
-        daily_state = journal.get_or_create_daily_state()
-        if daily_state["trading_halted"]:
-            log.warning("entry_blocked_trading_halted", reason=daily_state["halt_reason"])
-            journal.resolve_direction_request(direction_request_id, PendingRequestStatus.CANCELLED)
-            return None
-        if daily_state["trades_taken"] >= self.max_trades_per_day:
-            log.warning("entry_blocked_max_trades_per_day", trades_taken=daily_state["trades_taken"])
+        pretrade = pretrade_checks.run_pretrade_checks(self.max_trades_per_day)
+        if not pretrade.allowed:
+            log.warning("entry_blocked_pretrade_check", reason=pretrade.reason)
             journal.resolve_direction_request(direction_request_id, PendingRequestStatus.CANCELLED)
             return None
 

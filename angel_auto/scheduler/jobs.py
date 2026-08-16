@@ -71,15 +71,19 @@ class SchedulerService:
         on_daily_relogin: Callable[[], None],
         is_expiry_day: Callable[[], bool],
         on_daily_reset: Callable[[], None] = cancel_stale_pending_request,
+        on_eod: Callable[[], None] | None = None,
+        eod_time: str = "15:35",
     ) -> None:
         self.tz = ZoneInfo(timezone)
         self.scheduler = BackgroundScheduler(timezone=self.tz)
         self._square_off_normal = parse_hhmm(square_off_normal_time)
         self._square_off_expiry_day = parse_hhmm(square_off_expiry_day_time)
         self._relogin_time = parse_hhmm(daily_relogin_time)
+        self._eod_time = parse_hhmm(eod_time)
         self.on_square_off = on_square_off
         self.on_daily_relogin = on_daily_relogin
         self.on_daily_reset = on_daily_reset
+        self.on_eod = on_eod
         self.is_expiry_day = is_expiry_day
 
     def start(self) -> None:
@@ -109,6 +113,12 @@ class SchedulerService:
             CronTrigger(hour=self._relogin_time.hour, minute=self._relogin_time.minute, day_of_week="mon-fri", timezone=self.tz),
             id="daily_relogin",
         )
+        if self.on_eod is not None:
+            self.scheduler.add_job(
+                self.on_eod,
+                CronTrigger(hour=self._eod_time.hour, minute=self._eod_time.minute, day_of_week="mon-fri", timezone=self.tz),
+                id="eod_capture",
+            )
         self.scheduler.start()
         log.info("scheduler_started")
 

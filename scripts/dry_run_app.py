@@ -34,6 +34,7 @@ def main() -> int:
 
     print("App started. Live status:")
     print(f"  latest spot: {app._router.latest_spot}")
+    print(f"  latest vix: {app._router.latest_vix}")
     print(f"  candles so far: {app.bars.candle_count}")
     print(f"  option quotes subscribed: {len(app.option_chain.all_quotes())}")
     print(f"  scheduler jobs: {[j.id for j in app._scheduler.scheduler.get_jobs()]}")

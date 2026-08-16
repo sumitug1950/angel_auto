@@ -2,10 +2,6 @@
 scheduler into one running process. `mode` (config.yaml) decides which BrokerAdapter gets
 bound; everything above that line (strategy, risk, OMS) is identical across modes. Only
 paper mode is wired up so far - the live adapter is Phase 10.
-
-Known gap, called out rather than silently faked: the India VIX live feed isn't subscribed
-yet, so IV Rank can't be computed and every entry falls back to the DEBIT structure default
-(see strategy._compute_iv_rank, which already degrades gracefully when this raises).
 """
 from __future__ import annotations
 
@@ -17,6 +13,7 @@ from angel_auto.broker.angelone_auth import AngelSession, login, logout, renew_s
 from angel_auto.broker.angelone_ws import EXCHANGE_NSE_CM, EXCHANGE_NSE_FO, MODE_LTP, MODE_QUOTE, AngelOneWebSocket
 from angel_auto.broker.paper_broker import PaperBroker
 from angel_auto.core.enums import Direction, Mode
+from angel_auto.data.historical import bootstrap_vix_history, capture_eod_vix_close
 from angel_auto.data.instruments import InstrumentMaster
 from angel_auto.data.live_feed import GreeksRefresher, LiveFeedRouter, build_subscription_tokens
 from angel_auto.data.market_data import BarAggregator, OptionChainSnapshot
@@ -34,10 +31,7 @@ log = get_logger(__name__)
 
 STRIKE_BAND_POINTS = 1000.0  # subscribe to on-grid strikes within this range of spot
 FIRST_TICK_TIMEOUT_SEC = 10.0
-
-
-class VixFeedNotWiredUp(RuntimeError):
-    pass
+VIX_BOOTSTRAP_LOOKBACK_DAYS = 90
 
 
 class TradingApp:
@@ -74,6 +68,12 @@ class TradingApp:
         self._session = login(self.settings.credentials)
         self.instruments.load()
         spot = self.instruments.nifty_spot_instrument()
+        vix = self.instruments.india_vix_instrument()
+
+        try:
+            bootstrap_vix_history(self._session, vix.token, VIX_BOOTSTRAP_LOOKBACK_DAYS)
+        except Exception:
+            log.exception("vix_history_bootstrap_failed_iv_rank_will_fall_back_to_debit")
 
         self.broker = PaperBroker(self.option_chain, starting_capital_rs=app_cfg.paper_trading.starting_capital_rs)
         self.oms = OrderManager(
@@ -92,10 +92,10 @@ class TradingApp:
             get_current_vix=self._get_current_vix,
         )
 
-        self._router = LiveFeedRouter(spot.token, self.bars, self.option_chain)
+        self._router = LiveFeedRouter(spot.token, self.bars, self.option_chain, vix_token=vix.token)
         self._ws = AngelOneWebSocket(self._session, on_tick=self._router.on_tick)
         self._ws.start()
-        self._ws.subscribe(EXCHANGE_NSE_CM, [spot.token], mode=MODE_LTP)
+        self._ws.subscribe(EXCHANGE_NSE_CM, [spot.token, vix.token], mode=MODE_LTP)
         self._wait_for_first_spot_tick(FIRST_TICK_TIMEOUT_SEC)
         self._subscribe_option_band()
 
@@ -115,6 +115,7 @@ class TradingApp:
             on_square_off=self._handle_square_off,
             on_daily_relogin=self._handle_daily_relogin,
             is_expiry_day=lambda: is_position_expiry_today(journal.get_open_position(), date.today()),
+            on_eod=self._handle_eod,
         )
         self._scheduler.start()
 
@@ -188,10 +189,14 @@ class TradingApp:
         if self._session is not None:
             renew_session(self._session)
 
+    def _handle_eod(self) -> None:
+        capture_eod_vix_close(self._router.latest_vix)
+
     def _get_current_vix(self) -> float:
-        # India VIX isn't subscribed yet - strategy._compute_iv_rank already catches this
-        # and falls back to the DEBIT structure default, so this is a real gap, not a crash.
-        raise VixFeedNotWiredUp("India VIX live feed not wired up yet")
+        vix = self._router.latest_vix
+        if vix <= 0:
+            raise RuntimeError("no live India VIX value yet")
+        return vix
 
     def _current_or_default_expiry(self) -> str:
         open_position = journal.get_open_position()

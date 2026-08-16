@@ -18,11 +18,19 @@ log = get_logger(__name__)
 class LiveFeedRouter:
     """The on_tick callback handed to AngelOneWebSocket - routes each tick by token."""
 
-    def __init__(self, spot_token: str, bar_aggregator: BarAggregator, option_chain: OptionChainSnapshot) -> None:
+    def __init__(
+        self,
+        spot_token: str,
+        bar_aggregator: BarAggregator,
+        option_chain: OptionChainSnapshot,
+        vix_token: str | None = None,
+    ) -> None:
         self.spot_token = spot_token
+        self.vix_token = vix_token
         self.bars = bar_aggregator
         self.option_chain = option_chain
         self._latest_spot: float = 0.0
+        self._latest_vix: float = 0.0
 
     def on_tick(self, tick: dict) -> None:
         token = str(tick.get("token", ""))
@@ -36,12 +44,18 @@ class LiveFeedRouter:
         if token == self.spot_token:
             self._latest_spot = ltp
             self.bars.add_tick(ltp, datetime.now(timezone.utc))
+        elif token == self.vix_token:
+            self._latest_vix = ltp
         else:
             self.option_chain.update_ltp(token, ltp)
 
     @property
     def latest_spot(self) -> float:
         return self._latest_spot
+
+    @property
+    def latest_vix(self) -> float:
+        return self._latest_vix
 
 
 def build_subscription_tokens(

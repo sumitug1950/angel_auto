@@ -28,6 +28,7 @@ CACHE_PATH = Path("data_store/scrip_master.json")
 CACHE_MAX_AGE_SEC = 24 * 60 * 60  # instruments/expiries roll daily-ish; re-download once a day
 
 EXPECTED_NIFTY_SPOT_TOKEN = "26000"  # sanity-check only; the real value always comes from the master
+EXPECTED_INDIA_VIX_TOKEN = "99926017"  # sanity-check only; confirmed live from scrip master (2026-08-16)
 
 
 @dataclass(frozen=True)
@@ -117,6 +118,21 @@ class InstrumentMaster:
                 expected=EXPECTED_NIFTY_SPOT_TOKEN,
                 actual=instrument.token,
             )
+        return instrument
+
+    def india_vix_instrument(self) -> Instrument:
+        """The NSE 'INDIA VIX' index token - the IV Rank source (analytics/iv_rank.py)."""
+        self._ensure_loaded()
+        candidates = [
+            inst
+            for inst in self._by_name_type_expiry.get(("INDIA VIX", "AMXIDX", ""), [])
+            if inst.exchange == "NSE"
+        ]
+        if not candidates:
+            raise LookupError("INDIA VIX instrument not found in scrip master")
+        instrument = candidates[0]
+        if instrument.token != EXPECTED_INDIA_VIX_TOKEN:
+            log.warning("india_vix_token_mismatch", expected=EXPECTED_INDIA_VIX_TOKEN, actual=instrument.token)
         return instrument
 
     def option_chain(self, name: str, expiry: str) -> list[Instrument]:

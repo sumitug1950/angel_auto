@@ -135,7 +135,7 @@ class ExitConfig(BaseModel):
     sl_amount_rs: float = 4000
     risk_reward_ratio: float = 1.2
     trail_gap_rs: float = 1000
-    exit_on_opposite_macd: bool = True
+    exit_on_opposite_macd: bool = False
 
     @property
     def target_amount_rs(self) -> float:

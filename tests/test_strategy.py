@@ -389,15 +389,35 @@ def test_trailing_stop_locks_in_profit_above_target():
     assert result.reason == ExitReason.TRAILING_STOP
 
 
-def test_opposite_macd_exit_when_not_trailing():
+def test_opposite_macd_does_not_exit_by_default():
+    # MACD only gates entry timing now - a position stays open through a reversal unless
+    # SL/target/manual/square-off says otherwise (exit_on_opposite_macd defaults to False).
     monthly = "29SEP2026"
     instruments = _fake_instruments([monthly], STRIKES)
     chain = _seed_option_chain(instruments, monthly, STRIKES, ALL_DELTAS)
     ids = _open_test_position(instruments, chain, monthly, direction=Direction.LONG)
     bars = _bearish_bars()  # opposite of the LONG position
-    strategy = _make_strategy(_default_config(), instruments, bars, chain)
+    config = _default_config()
+    assert config.exit.exit_on_opposite_macd is False
+    strategy = _make_strategy(config, instruments, bars, chain)
 
     # small P&L, nowhere near SL or target
+    chain.update_ltp(ids["itm_token"], 305.0)
+
+    result = strategy.on_market_data()
+    assert result is None
+
+
+def test_opposite_macd_exit_fires_when_explicitly_enabled():
+    monthly = "29SEP2026"
+    instruments = _fake_instruments([monthly], STRIKES)
+    chain = _seed_option_chain(instruments, monthly, STRIKES, ALL_DELTAS)
+    ids = _open_test_position(instruments, chain, monthly, direction=Direction.LONG)
+    bars = _bearish_bars()  # opposite of the LONG position
+    config = _default_config()
+    config.exit.exit_on_opposite_macd = True
+    strategy = _make_strategy(config, instruments, bars, chain)
+
     chain.update_ltp(ids["itm_token"], 305.0)
 
     result = strategy.on_market_data()

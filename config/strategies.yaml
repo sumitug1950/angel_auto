@@ -42,4 +42,4 @@ strategies:
       sl_amount_rs: 4000
       risk_reward_ratio: 1.2   # target_amount_rs = sl_amount_rs * risk_reward_ratio = 4800
       trail_gap_rs: 1000       # trailing stop = peak_profit - trail_gap_rs, once target is first reached
-      exit_on_opposite_macd: true
+      exit_on_opposite_macd: false   # off - only fixed SL / trailing target / manual exit / square-off close a position

@@ -1,16 +1,21 @@
 """Composition root - wires the broker session, live data feed, strategy, OMS, and
 scheduler into one running process. `mode` (config.yaml) decides which BrokerAdapter gets
-bound; everything above that line (strategy, risk, OMS) is identical across modes. Only
-paper mode is wired up so far - the live adapter is Phase 10.
+bound; everything above that line (strategy, risk, OMS) is identical across modes.
+
+mode: live requires more than editing config.yaml - see _require_live_trading_confirmation
+below. That's deliberate: real orders should never activate from a one-line config edit.
 """
 from __future__ import annotations
 
+import os
 import threading
 import time
 from datetime import date
 
 from angel_auto.broker.angelone_auth import AngelSession, login, logout, renew_session
+from angel_auto.broker.angelone_rest import AngelOneBroker
 from angel_auto.broker.angelone_ws import EXCHANGE_NSE_CM, EXCHANGE_NSE_FO, MODE_LTP, MODE_QUOTE, AngelOneWebSocket
+from angel_auto.broker.base import BrokerAdapter
 from angel_auto.broker.paper_broker import PaperBroker
 from angel_auto.core.enums import Direction, Mode
 from angel_auto.data.historical import bootstrap_vix_history, capture_eod_vix_close
@@ -33,12 +38,21 @@ STRIKE_BAND_POINTS = 1000.0  # subscribe to on-grid strikes within this range of
 FIRST_TICK_TIMEOUT_SEC = 10.0
 VIX_BOOTSTRAP_LOOKBACK_DAYS = 90
 
+# mode: live needs this env var set to exactly this value, in addition to config.yaml -
+# an intentional second barrier so real-money trading can never turn on from a one-line
+# config edit alone. Never put this in config.yaml/.env - set it by hand, in the shell,
+# only when you mean it.
+LIVE_TRADING_CONFIRM_ENV_VAR = "ANGEL_LIVE_TRADING_CONFIRMED"
+LIVE_TRADING_CONFIRM_VALUE = "YES_I_UNDERSTAND_THE_RISK"
+
 
 class TradingApp:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
-        if self.settings.app.mode != Mode.PAPER:
-            raise NotImplementedError("only paper mode is wired up so far (live adapter is Phase 10)")
+        if self.settings.app.mode == Mode.BACKTEST:
+            raise NotImplementedError("backtest mode runs via scripts/run_backtest.py (BacktestEngine), not TradingApp")
+        if self.settings.app.mode == Mode.LIVE:
+            self._require_live_trading_confirmation()
 
         init_db()
 
@@ -54,9 +68,19 @@ class TradingApp:
         self._market_data_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
 
-        self.broker: PaperBroker | None = None
+        self.broker: BrokerAdapter | None = None
         self.strategy: MacdItmOtmSpreadStrategy | None = None
         self.oms: OrderManager | None = None
+
+    @staticmethod
+    def _require_live_trading_confirmation() -> None:
+        if os.environ.get(LIVE_TRADING_CONFIRM_ENV_VAR) != LIVE_TRADING_CONFIRM_VALUE:
+            raise RuntimeError(
+                f"mode: live requires the environment variable {LIVE_TRADING_CONFIRM_ENV_VAR}="
+                f"{LIVE_TRADING_CONFIRM_VALUE} to be set explicitly. This is deliberate - do not "
+                "set it until paper trading has been validated (see the plan's pre-live checklist)."
+            )
+        log.warning("live_trading_confirmed_real_orders_will_be_placed")
 
     # --- Lifecycle -----------------------------------------------------
 
@@ -75,7 +99,11 @@ class TradingApp:
         except Exception:
             log.exception("vix_history_bootstrap_failed_iv_rank_will_fall_back_to_debit")
 
-        self.broker = PaperBroker(self.option_chain, starting_capital_rs=app_cfg.paper_trading.starting_capital_rs)
+        if app_cfg.mode == Mode.LIVE:
+            self.broker = AngelOneBroker(self._session)
+            log.warning("live_broker_adapter_active_real_orders_will_be_placed")
+        else:
+            self.broker = PaperBroker(self.option_chain, starting_capital_rs=app_cfg.paper_trading.starting_capital_rs)
         self.oms = OrderManager(
             self.broker,
             product_type=app_cfg.oms.product_type,

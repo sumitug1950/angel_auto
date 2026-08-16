@@ -21,6 +21,8 @@ strategies:
       credit_iv_rank_threshold: 50   # switch to CREDIT (short ITM + buy OTM hedge) only above this IV Rank
       iv_rank_lookback_days: 90
       iv_source: INDIA_VIX
+      vix_spike_pct_threshold: 3.0   # if VIX has moved >= this % vs yesterday's close, force DEBIT only - CREDIT
+                                      # (naked-ish short) is riskier on a volatility-spike day, overrides IV Rank
 
     expiry:
       # Rule depends on structure (see structure.default/credit_iv_rank_threshold above):

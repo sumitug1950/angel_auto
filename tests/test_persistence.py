@@ -22,6 +22,25 @@ def test_vix_history_upsert_and_read():
     assert sorted(history) == [13.5, 14.5]
 
 
+def test_get_previous_vix_close_returns_most_recent_prior_day():
+    journal.upsert_vix_close(date(2026, 8, 10), 13.5)
+    journal.upsert_vix_close(date(2026, 8, 11), 14.2)
+
+    assert journal.get_previous_vix_close(before_date=date(2026, 8, 12)) == 14.2
+
+
+def test_get_previous_vix_close_ignores_same_day_entry():
+    # today's own close (if already recorded) must not be returned as "previous"
+    journal.upsert_vix_close(date(2026, 8, 10), 13.5)
+    journal.upsert_vix_close(date(2026, 8, 11), 14.2)
+
+    assert journal.get_previous_vix_close(before_date=date(2026, 8, 11)) == 13.5
+
+
+def test_get_previous_vix_close_none_when_no_history():
+    assert journal.get_previous_vix_close(before_date=date(2026, 8, 11)) is None
+
+
 def test_daily_state_create_and_increment():
     state = journal.get_or_create_daily_state(date(2026, 8, 16))
     assert state["trades_taken"] == 0

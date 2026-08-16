@@ -244,11 +244,67 @@ def test_structure_switches_to_credit_when_iv_rank_high():
 
     for d in range(90):
         journal.upsert_vix_close(date(2026, 5, 1) + timedelta(days=d), 10.0 + (d % 20))  # range 10-29
+    # yesterday's close near today's 29.0 -> day-over-day change stays under the 3% spike
+    # threshold, so the vix-spike override doesn't mask the IV-Rank-driven CREDIT choice
+    journal.upsert_vix_close(date.today() - timedelta(days=1), 28.5)
     strategy = _make_strategy(_default_config(), instruments, bars, chain, vix=29.0)  # near top of range -> high rank
 
     intent = strategy.on_direction_request(Direction.LONG)
     assert intent.structure_type == StructureType.CREDIT
     assert intent.expiry == nearest  # CREDIT -> nearest/current, not monthly
+
+
+def test_vix_spike_forces_debit_even_when_iv_rank_would_pick_credit():
+    # same setup as test_structure_switches_to_credit_when_iv_rank_high (IV Rank alone
+    # would pick CREDIT), except yesterday's close is far enough from today's VIX to
+    # cross the 3% spike threshold - that must force DEBIT regardless of IV Rank.
+    nearest = "20AUG2026"
+    monthly = "29SEP2026"
+    instruments = _fake_instruments([nearest, monthly], STRIKES)
+    chain = _seed_option_chain(instruments, monthly, STRIKES, ALL_DELTAS)
+    bars = _bullish_bars()
+
+    for d in range(90):
+        journal.upsert_vix_close(date(2026, 5, 1) + timedelta(days=d), 10.0 + (d % 20))
+    journal.upsert_vix_close(date.today() - timedelta(days=1), 20.0)  # yesterday 20 -> today 29 is a ~45% jump
+    strategy = _make_strategy(_default_config(), instruments, bars, chain, vix=29.0)
+
+    intent = strategy.on_direction_request(Direction.LONG)
+    assert intent.structure_type == StructureType.DEBIT
+    assert intent.expiry == monthly  # DEBIT -> monthly, confirms the override took effect
+
+
+def test_vix_drop_does_not_trigger_the_spike_override():
+    # a large *downward* move must not force DEBIT - only a rise signals rising risk
+    nearest = "20AUG2026"
+    monthly = "29SEP2026"
+    instruments = _fake_instruments([nearest, monthly], STRIKES)
+    chain = _seed_option_chain(instruments, nearest, STRIKES, ALL_DELTAS)
+    bars = _bullish_bars()
+
+    for d in range(90):
+        journal.upsert_vix_close(date(2026, 5, 1) + timedelta(days=d), 10.0 + (d % 20))
+    journal.upsert_vix_close(date.today() - timedelta(days=1), 40.0)  # yesterday 40 -> today 29 is a big drop
+    strategy = _make_strategy(_default_config(), instruments, bars, chain, vix=29.0)
+
+    intent = strategy.on_direction_request(Direction.LONG)
+    assert intent.structure_type == StructureType.CREDIT  # IV Rank still drives it - no override
+
+
+def test_vix_spike_just_under_threshold_does_not_override():
+    nearest = "20AUG2026"
+    monthly = "29SEP2026"
+    instruments = _fake_instruments([nearest, monthly], STRIKES)
+    chain = _seed_option_chain(instruments, nearest, STRIKES, ALL_DELTAS)
+    bars = _bullish_bars()
+
+    for d in range(90):
+        journal.upsert_vix_close(date(2026, 5, 1) + timedelta(days=d), 10.0 + (d % 20))
+    journal.upsert_vix_close(date.today() - timedelta(days=1), 28.3)  # (29-28.3)/28.3 ~= 2.47% - under 3%
+    strategy = _make_strategy(_default_config(), instruments, bars, chain, vix=29.0)
+
+    intent = strategy.on_direction_request(Direction.LONG)
+    assert intent.structure_type == StructureType.CREDIT
 
 
 @pytest.mark.parametrize(
@@ -306,6 +362,7 @@ def test_strike_selection_sides_flip_for_credit():
 
     for d in range(90):
         journal.upsert_vix_close(date(2026, 5, 1) + timedelta(days=d), 10.0 + (d % 20))
+    journal.upsert_vix_close(date.today() - timedelta(days=1), 28.5)  # keep day-over-day change under the spike threshold
     strategy = _make_strategy(_default_config(), instruments, bars, chain, vix=29.0)  # -> CREDIT
 
     intent = strategy.on_direction_request(Direction.LONG)  # CREDIT -> PE

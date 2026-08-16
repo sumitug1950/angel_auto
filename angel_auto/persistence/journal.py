@@ -57,6 +57,22 @@ def get_vix_history(lookback_days: int, as_of: date | None = None) -> list[float
         return [row.vix_close for row in rows]
 
 
+def get_previous_vix_close(before_date: date | None = None) -> float | None:
+    """The most recent VIX close strictly *before* `before_date` (defaults to today) -
+    i.e. yesterday's close, for computing a day-over-day % change. Deliberately separate
+    from get_vix_history(), which can't distinguish "today already recorded" from
+    "today not recorded yet" since it only returns bare values, not dates."""
+    before_date = before_date or date.today()
+    with session_scope() as session:
+        row = session.scalar(
+            select(IVHistory)
+            .where(IVHistory.trade_date < before_date)
+            .order_by(IVHistory.trade_date.desc())
+            .limit(1)
+        )
+        return row.vix_close if row else None
+
+
 # --- Daily risk state (max_trades_per_day, daily_loss_limit_rs, kill state) ----
 
 

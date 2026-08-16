@@ -175,7 +175,24 @@ class MacdItmOtmSpreadStrategy(Strategy):
         except Exception:  # not enough VIX history yet, or feed unavailable - fall back to DEBIT default
             return None
 
+    def _is_vix_spiking(self) -> bool:
+        """VIX up sharply vs yesterday's close means rising fear/uncertainty - CREDIT
+        (short ITM + hedge) is riskier on a day like that, so it's force-disabled
+        regardless of IV Rank. Only an *upward* spike counts - a falling VIX is a calming
+        market, not a reason to restrict anything."""
+        try:
+            current_vix = self.get_current_vix()
+            previous_close = journal.get_previous_vix_close(before_date=self.get_today())
+            if not previous_close:
+                return False
+            pct_change = (current_vix - previous_close) / previous_close * 100.0
+            return pct_change >= self.config.structure.vix_spike_pct_threshold
+        except Exception:
+            return False
+
     def _select_structure(self, iv_rank: float | None) -> StructureType:
+        if self._is_vix_spiking():
+            return StructureType.DEBIT
         if iv_rank is not None and iv_rank >= self.config.structure.credit_iv_rank_threshold:
             return StructureType.CREDIT
         return StructureType.DEBIT

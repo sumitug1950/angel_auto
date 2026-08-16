@@ -121,6 +121,7 @@ class StructureConfig(BaseModel):
     credit_iv_rank_threshold: float = 50.0
     iv_rank_lookback_days: int = 90
     iv_source: Literal["INDIA_VIX"] = "INDIA_VIX"
+    vix_spike_pct_threshold: float = 3.0
 
 
 class StrikesConfig(BaseModel):

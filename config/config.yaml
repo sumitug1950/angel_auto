@@ -5,6 +5,7 @@ timezone: Asia/Kolkata
 
 underlying: NIFTY
 lot_size: 65  # NSE Nifty lot size - confirmed live from scrip master (2026-08-16); verify/update if NSE revises it
+risk_free_rate: 0.065
 
 market_hours:
   open: "09:15"

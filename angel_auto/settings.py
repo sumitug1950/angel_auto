@@ -86,6 +86,7 @@ class AppConfig(BaseModel):
     timezone: str = "Asia/Kolkata"
     underlying: str = "NIFTY"
     lot_size: int = 65
+    risk_free_rate: float = 0.065  # ~ current Indian T-bill/repo yield; minor factor for short-dated options
     market_hours: MarketHoursConfig = MarketHoursConfig()
     square_off: SquareOffConfig = SquareOffConfig()
     risk: RiskConfig

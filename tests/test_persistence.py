@@ -1,9 +1,5 @@
 from datetime import date
 
-import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
 from angel_auto.core.enums import (
     Direction,
     ExitReason,
@@ -14,19 +10,7 @@ from angel_auto.core.enums import (
     PositionStatus,
     StructureType,
 )
-from angel_auto.persistence import db as db_module
 from angel_auto.persistence import journal
-
-
-@pytest.fixture(autouse=True)
-def fresh_db(monkeypatch):
-    """Fresh in-memory SQLite per test - never touches the real data_store/angel_auto.db."""
-    engine = create_engine("sqlite:///:memory:", future=True)
-    session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, future=True)
-    monkeypatch.setattr(db_module, "_engine", engine)
-    monkeypatch.setattr(db_module, "_SessionLocal", session_factory)
-    db_module.init_db()
-    yield
 
 
 def test_vix_history_upsert_and_read():

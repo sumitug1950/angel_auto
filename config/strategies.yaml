@@ -23,8 +23,12 @@ strategies:
       iv_source: INDIA_VIX
 
     expiry:
-      type: MONTHLY             # not weekly - the last listed expiry in each calendar month
-      min_days_gap: 10          # if the nearest monthly expiry is closer than this, roll to the next one
+      # Rule depends on structure (see structure.default/credit_iv_rank_threshold above):
+      #   DEBIT  (ITM buy)  -> monthly expiry, needs time for the long premium to work - min_days_gap applies
+      #   CREDIT (ITM sell) -> nearest/current expiry, benefits from fast theta decay
+      debit_expiry_type: MONTHLY
+      debit_min_days_gap: 10    # if the nearest monthly is closer than this, roll to the next monthly
+      credit_expiry_type: NEAREST
 
     strikes:
       itm_delta_target: 0.7

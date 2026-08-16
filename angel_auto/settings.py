@@ -119,8 +119,11 @@ class StrikesConfig(BaseModel):
 
 
 class ExpiryConfig(BaseModel):
-    type: Literal["MONTHLY", "WEEKLY"] = "MONTHLY"
-    min_days_gap: int = 10
+    # DEBIT (ITM buy) -> monthly, needs time for the long premium to work.
+    # CREDIT (ITM sell) -> nearest/current expiry, benefits from fast theta decay.
+    debit_expiry_type: Literal["MONTHLY"] = "MONTHLY"
+    debit_min_days_gap: int = 10
+    credit_expiry_type: Literal["NEAREST"] = "NEAREST"
 
 
 class SizingConfig(BaseModel):

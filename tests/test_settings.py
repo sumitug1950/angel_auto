@@ -14,3 +14,7 @@ def test_settings_load_and_validate():
     assert active.exit.sl_amount_rs == 4000
     assert active.exit.target_amount_rs == active.exit.sl_amount_rs * active.exit.risk_reward_ratio
     assert active.sizing.lots == 1
+    assert active.strikes.strike_grid == 100.0
+    assert active.expiry.debit_expiry_type == "MONTHLY"
+    assert active.expiry.debit_min_days_gap == 10
+    assert active.expiry.credit_expiry_type == "NEAREST"

@@ -50,6 +50,10 @@ class SquareOffConfig(BaseModel):
     expiry_day_time: str = "15:00"
 
 
+class SchedulerConfig(BaseModel):
+    daily_relogin_time: str = "08:45"  # before market open (09:15) - session tokens don't persist overnight
+
+
 class RiskConfig(BaseModel):
     daily_loss_limit_rs: float
     max_consecutive_losses: int
@@ -89,6 +93,7 @@ class AppConfig(BaseModel):
     risk_free_rate: float = 0.065  # ~ current Indian T-bill/repo yield; minor factor for short-dated options
     market_hours: MarketHoursConfig = MarketHoursConfig()
     square_off: SquareOffConfig = SquareOffConfig()
+    scheduler: SchedulerConfig = SchedulerConfig()
     risk: RiskConfig
     oms: OMSConfig = OMSConfig()
     database: DatabaseConfig = DatabaseConfig()

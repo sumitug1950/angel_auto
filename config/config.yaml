@@ -15,6 +15,9 @@ square_off:
   normal_time: "15:15"
   expiry_day_time: "15:00"
 
+scheduler:
+  daily_relogin_time: "08:45"
+
 risk:
   daily_loss_limit_rs: 8000       # ~ 2 trades x sl_amount_rs, hard ceiling for the day
   max_consecutive_losses: 2

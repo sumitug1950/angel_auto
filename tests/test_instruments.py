@@ -63,3 +63,33 @@ def test_select_monthly_expiry_raises_when_nothing_far_enough_out():
         assert False, "expected LookupError"
     except LookupError:
         pass
+
+
+def _fake_master_with_strikes(expiry: str, strikes: list[float]) -> InstrumentMaster:
+    master = InstrumentMaster()
+    instruments = [
+        Instrument(
+            token=str(2000 + i),
+            symbol=f"NIFTY{expiry}{int(strike)}CE",
+            name="NIFTY",
+            expiry=expiry,
+            strike=strike,
+            lot_size=65,
+            instrument_type="OPTIDX",
+            exchange="NFO",
+        )
+        for i, strike in enumerate(strikes)
+    ]
+    master._by_name_type_expiry = {("NIFTY", "OPTIDX", expiry): instruments}
+    master._loaded = True
+    return master
+
+
+def test_strikes_on_grid_filters_out_denser_near_atm_strikes():
+    # mirrors real data: 50-pt strikes near ATM, 100-pt further out
+    strikes = [23900.0, 24000.0, 24050.0, 24100.0, 24150.0, 24200.0, 24300.0]
+    master = _fake_master_with_strikes("29SEP2026", strikes)
+    on_grid = master.strikes_on_grid("NIFTY", "29SEP2026", grid=100.0)
+    assert on_grid == [23900.0, 24000.0, 24100.0, 24200.0, 24300.0]
+    assert 24050.0 not in on_grid
+    assert 24150.0 not in on_grid

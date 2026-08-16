@@ -115,6 +115,7 @@ class StructureConfig(BaseModel):
 class StrikesConfig(BaseModel):
     itm_delta_target: float = Field(0.7, gt=0, lt=1)
     otm_delta_target: float = Field(0.1, gt=0, lt=1)
+    strike_grid: float = 100.0
 
 
 class ExpiryConfig(BaseModel):

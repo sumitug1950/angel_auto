@@ -29,6 +29,7 @@ strategies:
     strikes:
       itm_delta_target: 0.7
       otm_delta_target: 0.1
+      strike_grid: 100   # only strikes on this spacing are considered (monthly contracts also list a denser 50-pt grid near ATM - skip it)
 
     sizing:
       lots: 1                  # fixed - no scaling formula

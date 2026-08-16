@@ -171,3 +171,9 @@ class InstrumentMaster:
     def strikes_for_expiry(self, name: str, expiry: str) -> list[float]:
         strikes = {inst.strike for inst in self.option_chain(name, expiry)}
         return sorted(strikes)
+
+    def strikes_on_grid(self, name: str, expiry: str, grid: float = 100.0) -> list[float]:
+        """Restrict to strikes on a clean `grid`-point spacing (your rule: 100-point strikes
+        for monthly contracts). Near ATM the master often also lists a denser 50-point grid -
+        this filters those out so strike selection only ever considers the coarser grid."""
+        return [s for s in self.strikes_for_expiry(name, expiry) if s % grid == 0]

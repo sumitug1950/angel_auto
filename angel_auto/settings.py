@@ -54,6 +54,10 @@ class SchedulerConfig(BaseModel):
     daily_relogin_time: str = "08:45"  # before market open (09:15) - session tokens don't persist overnight
 
 
+class PaperTradingConfig(BaseModel):
+    starting_capital_rs: float = 20000.0  # only used to simulate margin checks in PaperBroker
+
+
 class RiskConfig(BaseModel):
     daily_loss_limit_rs: float
     max_consecutive_losses: int
@@ -94,6 +98,7 @@ class AppConfig(BaseModel):
     market_hours: MarketHoursConfig = MarketHoursConfig()
     square_off: SquareOffConfig = SquareOffConfig()
     scheduler: SchedulerConfig = SchedulerConfig()
+    paper_trading: PaperTradingConfig = PaperTradingConfig()
     risk: RiskConfig
     oms: OMSConfig = OMSConfig()
     database: DatabaseConfig = DatabaseConfig()

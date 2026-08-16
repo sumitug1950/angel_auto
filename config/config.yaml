@@ -18,6 +18,9 @@ square_off:
 scheduler:
   daily_relogin_time: "08:45"
 
+paper_trading:
+  starting_capital_rs: 20000   # only used to simulate margin checks in PaperBroker
+
 risk:
   daily_loss_limit_rs: 8000       # ~ 2 trades x sl_amount_rs, hard ceiling for the day
   max_consecutive_losses: 2

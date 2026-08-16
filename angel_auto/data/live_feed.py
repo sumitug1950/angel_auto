@@ -1,0 +1,126 @@
+"""Live data pipeline: routes WebSocket ticks into the BarAggregator (spot) and
+OptionChainSnapshot (options), and periodically refreshes per-strike Greeks. This is the
+glue between broker/angelone_ws.py's raw tick callback and the strategy's market-data
+inputs - nothing here makes trading decisions, it only keeps market data current.
+"""
+from __future__ import annotations
+
+import threading
+from datetime import datetime, timezone
+
+from angel_auto.data.instruments import InstrumentMaster
+from angel_auto.data.market_data import BarAggregator, OptionChainSnapshot, refresh_option_chain_greeks
+from angel_auto.logging_conf import get_logger
+
+log = get_logger(__name__)
+
+
+class LiveFeedRouter:
+    """The on_tick callback handed to AngelOneWebSocket - routes each tick by token."""
+
+    def __init__(self, spot_token: str, bar_aggregator: BarAggregator, option_chain: OptionChainSnapshot) -> None:
+        self.spot_token = spot_token
+        self.bars = bar_aggregator
+        self.option_chain = option_chain
+        self._latest_spot: float = 0.0
+
+    def on_tick(self, tick: dict) -> None:
+        token = str(tick.get("token", ""))
+        raw_price = tick.get("last_traded_price")
+        if not token or raw_price is None:
+            return
+        ltp = raw_price / 100.0  # Angel One ticks carry price in integer paise
+        if ltp <= 0:
+            return
+
+        if token == self.spot_token:
+            self._latest_spot = ltp
+            self.bars.add_tick(ltp, datetime.now(timezone.utc))
+        else:
+            self.option_chain.update_ltp(token, ltp)
+
+    @property
+    def latest_spot(self) -> float:
+        return self._latest_spot
+
+
+def build_subscription_tokens(
+    instruments: InstrumentMaster,
+    option_chain: OptionChainSnapshot,
+    underlying: str,
+    expiry: str,
+    center_strike: float,
+    band_points: float,
+    grid: float,
+) -> list[str]:
+    """Registers a quote slot (in `option_chain`) for every on-grid strike within
+    `band_points` of `center_strike`, both CE and PE, and returns their tokens - ready to
+    hand to AngelOneWebSocket.subscribe(). Called once per expiry roll (DEBIT->monthly,
+    CREDIT->nearest - see strategy), not per tick.
+    """
+    tokens = []
+    for inst in instruments.option_chain(underlying, expiry):
+        if inst.strike % grid != 0:
+            continue
+        if abs(inst.strike - center_strike) > band_points:
+            continue
+        option_type = inst.symbol[-2:]
+        option_chain.register(inst.token, inst.symbol, inst.strike, option_type)
+        tokens.append(inst.token)
+    return tokens
+
+
+class GreeksRefresher:
+    """Periodically recomputes per-strike IV/delta on a background thread - a batch pass
+    over every subscribed option, not a per-tick operation, since solving IV for each
+    strike on every single tick would be wasteful."""
+
+    def __init__(
+        self,
+        option_chain: OptionChainSnapshot,
+        get_spot,  # Callable[[], float]
+        get_expiry,  # Callable[[], str] - expiry can change if the strategy rolls DEBIT<->CREDIT
+        rate: float,
+        interval_sec: float = 5.0,
+    ) -> None:
+        self.option_chain = option_chain
+        self.get_spot = get_spot
+        self.get_expiry = get_expiry
+        self.rate = rate
+        self.interval_sec = interval_sec
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._run, name="greeks-refresher", daemon=True)
+        self._thread.start()
+        log.info("greeks_refresher_started", interval_sec=self.interval_sec)
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=5)
+        log.info("greeks_refresher_stopped")
+
+    def _run(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                self._refresh_once()
+            except Exception:
+                log.exception("greeks_refresher_cycle_failed")
+            self._stop_event.wait(self.interval_sec)
+
+    def _refresh_once(self) -> None:
+        spot = self.get_spot()
+        if spot <= 0:
+            return
+        time_to_expiry_years = self._time_to_expiry_years(self.get_expiry())
+        if time_to_expiry_years <= 0:
+            return
+        refresh_option_chain_greeks(self.option_chain, spot, time_to_expiry_years, self.rate)
+
+    @staticmethod
+    def _time_to_expiry_years(expiry: str) -> float:
+        expiry_close = datetime.strptime(expiry, "%d%b%Y").replace(hour=15, minute=30)
+        remaining_sec = (expiry_close - datetime.now()).total_seconds()
+        return max(remaining_sec, 0.0) / (365 * 24 * 3600)

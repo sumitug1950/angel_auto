@@ -3,439 +3,825 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>angel_auto dashboard</title>
+<title>angel_auto · Nifty</title>
 <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-  <header>
-    <h1>angel_auto</h1>
-    <div class="status-bar">
-      <span id="mode-badge" class="badge">mode: --</span>
-      <span id="market-badge" class="badge">market: --</span>
-      <span id="spot-value">Spot: --</span>
-      <span id="vix-value">VIX: --</span>
+  <header class="topbar">
+    <div class="brand">angel_auto <span class="brand-sub">Nifty options</span></div>
+    <div class="topbar-stats">
+      <span id="mode-pill" class="pill">--</span>
+      <span id="market-pill" class="pill"><span class="dot"></span><span id="market-text">Market --</span></span>
+      <span id="feed-pill" class="pill"><span class="dot"></span><span id="feed-text">Data --</span></span>
+      <div class="stat-inline"><span class="stat-label">Nifty</span><span id="spot" class="stat-value">--</span></div>
+      <div class="stat-inline"><span class="stat-label">VIX</span><span id="vix" class="stat-value">--</span></div>
+      <div class="stat-inline"><span class="stat-label">IST</span><span id="clock" class="stat-value">--</span></div>
+      <span id="conn-pill" class="pill pill-warn"><span class="dot"></span><span id="conn-text">Connecting…</span></span>
     </div>
   </header>
 
-  <main>
-    <section class="card card-wide" id="chart-card">
-      <h2>Nifty Spot - Tick by Tick + MACD</h2>
-      <div id="price-chart" class="chart-box"></div>
-      <div id="macd-chart" class="chart-box chart-box-small"></div>
-    </section>
-
-    <section class="card" id="controls">
-      <h2>Manual Control (Flagship)</h2>
-      <div class="control-row">
-        <button id="btn-buying" class="btn btn-buying">Buying</button>
-        <button id="btn-selling" class="btn btn-selling">Selling</button>
+  <main class="layout">
+    <section class="card chart-card" id="chart-card">
+      <div class="card-head">
+        <div>
+          <h2>Nifty spot · {{ candle_interval_sec }}-sec candles</h2>
+          <p class="card-sub">Neeche MACD — isi se entry confirm hoti hai</p>
+        </div>
+        <div class="seg seg-small" id="range-buttons" role="group" aria-label="Chart range">
+          <button type="button" data-minutes="15">15m</button>
+          <button type="button" data-minutes="30" class="active">30m</button>
+          <button type="button" data-minutes="60">1h</button>
+          <button type="button" data-minutes="0">Poora din</button>
+        </div>
       </div>
-      <p id="structure-status" class="position-status">Structure preference: --</p>
-
-      <div class="control-row">
-        <button id="btn-long" class="btn btn-long">Long (Upar)</button>
-        <button id="btn-short" class="btn btn-short">Short (Niche)</button>
+      <div class="chart-wrap chart-wrap-grow">
+        <div class="chart-legend" id="price-legend"></div>
+        <div id="price-chart" class="chart price-chart"></div>
+        <div class="chart-empty" id="chart-empty">Abhi chart ka data nahi hai — market band hai ya app abhi start hui hai.</div>
       </div>
-      <div id="pending-box" class="pending-box hidden">
-        <span id="pending-text"></span>
-        <button id="btn-cancel-pending" class="btn btn-small">Cancel</button>
-      </div>
-      <p id="position-status" class="position-status">Position: --</p>
-
-      <div class="control-row">
-        <button id="btn-exit-now" class="btn btn-warning">Exit Now</button>
-        <button id="btn-kill-switch" class="btn btn-danger">Kill Switch</button>
+      <div class="chart-wrap">
+        <div class="chart-legend" id="macd-legend"></div>
+        <div id="macd-chart" class="chart macd-chart"></div>
       </div>
     </section>
 
-    <section class="card" id="zc-atm_sell_macd_zero-card">
-      <h2>ATM Sell - Automatic</h2>
-      <p id="zc-status-atm_sell_macd_zero" class="position-status">Position: --</p>
-      <div class="control-row">
-        <button class="btn btn-warning" data-strategy="atm_sell_macd_zero" data-action="exit-now">Exit Now</button>
-        <button class="btn btn-danger" data-strategy="atm_sell_macd_zero" data-action="kill-switch">Kill Switch</button>
-      </div>
-      <p class="strategy-summary" id="summary-atm_sell_macd_zero">Trades: -- | Net: --</p>
-      <div class="table-scroll">
-        <table class="trades-table" data-strategy="atm_sell_macd_zero">
-          <thead>
-            <tr><th>Entry</th><th>Exit</th><th>Leg</th><th>Entry Px</th><th>Exit Px</th><th>Gross</th><th>Charges</th><th>Net</th></tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </section>
+    <aside class="sidebar">
+      <section class="card" id="control-card">
+        <div class="card-head">
+          <h2>Trade control</h2>
+          <span id="flagship-pill" class="pill">--</span>
+        </div>
 
-    <section class="card" id="zc-itm4_buy_macd_zero-card">
-      <h2>ITM4 Buy - Automatic</h2>
-      <p id="zc-status-itm4_buy_macd_zero" class="position-status">Position: --</p>
-      <div class="control-row">
-        <button class="btn btn-warning" data-strategy="itm4_buy_macd_zero" data-action="exit-now">Exit Now</button>
-        <button class="btn btn-danger" data-strategy="itm4_buy_macd_zero" data-action="kill-switch">Kill Switch</button>
-      </div>
-      <p class="strategy-summary" id="summary-itm4_buy_macd_zero">Trades: -- | Net: --</p>
-      <div class="table-scroll">
-        <table class="trades-table" data-strategy="itm4_buy_macd_zero">
-          <thead>
-            <tr><th>Entry</th><th>Exit</th><th>Leg</th><th>Entry Px</th><th>Exit Px</th><th>Gross</th><th>Charges</th><th>Net</th></tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </section>
+        <div id="frozen-banner" class="banner banner-error" role="alert" hidden></div>
 
-    <section class="card" id="trades-card">
-      <h2>Flagship Trade Log</h2>
-      <button id="btn-refresh-trades" class="btn btn-small">Refresh</button>
-      <table id="trades-table">
-        <thead>
-          <tr><th>Time</th><th>Dir</th><th>Structure</th><th>Expiry</th><th>Exit reason</th><th>P&amp;L</th></tr>
-        </thead>
-        <tbody id="trades-body"></tbody>
-      </table>
-    </section>
+        <p class="step-label">1 · Option khareedna ya bechna?</p>
+        <div class="seg" role="group" aria-label="Buying or Selling">
+          <button type="button" id="btn-buying" aria-pressed="false">Buying</button>
+          <button type="button" id="btn-selling" aria-pressed="false">Selling</button>
+        </div>
+        <p class="hint" id="structure-hint">--</p>
 
-    <section class="card" id="logs-card">
-      <h2>Logs</h2>
-      <button id="btn-refresh-logs" class="btn btn-small">Refresh</button>
-      <pre id="log-view"></pre>
+        <p class="step-label">2 · Market kis taraf jayega?</p>
+        <div class="direction-row">
+          <button type="button" id="btn-long" class="dir-btn dir-long">
+            <span class="dir-arrow" aria-hidden="true">▲</span>
+            <span class="dir-main" id="long-label">Long</span>
+            <span class="dir-sub">Market upar</span>
+          </button>
+          <button type="button" id="btn-short" class="dir-btn dir-short">
+            <span class="dir-arrow" aria-hidden="true">▼</span>
+            <span class="dir-main" id="short-label">Short</span>
+            <span class="dir-sub">Market neeche</span>
+          </button>
+        </div>
+
+        <div id="pending-box" class="banner banner-warn" hidden>
+          <div>
+            <strong id="pending-title">Pending</strong>
+            <div id="pending-text" class="banner-sub"></div>
+          </div>
+          <button type="button" id="btn-cancel-pending" class="btn btn-ghost">Cancel</button>
+        </div>
+        <div id="entry-notice" class="banner banner-error" role="alert" hidden></div>
+
+        <div class="danger-row">
+          <button type="button" id="btn-exit-now" class="btn btn-warning">Exit now</button>
+          <button type="button" id="btn-kill-switch" class="btn btn-danger">Kill switch</button>
+        </div>
+        <div id="action-msg" class="action-msg" aria-live="polite"></div>
+      </section>
+
+      <section class="card" id="position-card">
+        <div class="card-head">
+          <h2>Position</h2>
+          <span id="position-pill" class="pill">--</span>
+        </div>
+        <div id="position-empty" class="empty">Koi position khuli nahi hai</div>
+        <div id="position-body" hidden>
+          <div class="pnl-row">
+            <div>
+              <div class="stat-label">Live P&amp;L</div>
+              <div id="pos-pnl" class="hero-num">--</div>
+            </div>
+            <div id="pos-meta" class="pos-meta"></div>
+          </div>
+          <div class="meter" aria-hidden="true">
+            <div class="meter-track">
+              <div class="meter-fill" id="meter-fill"></div>
+              <div class="meter-zero" id="meter-zero"></div>
+              <div class="meter-marker" id="meter-marker"></div>
+            </div>
+            <div class="meter-labels"><span id="meter-sl">SL</span><span>₹0</span><span id="meter-target">Target</span></div>
+          </div>
+          <p class="hint" id="trail-info"></p>
+          <div class="table-scroll">
+            <table class="data-table">
+              <thead><tr><th>Leg</th><th>Strike</th><th class="num">Entry</th><th class="num">LTP</th><th class="num">P&amp;L</th></tr></thead>
+              <tbody id="legs-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" id="today-card">
+        <div class="card-head">
+          <h2>Aaj ka hisaab</h2>
+          <span id="halt-pill" class="pill">--</span>
+        </div>
+        <div class="tiles">
+          <div class="tile"><div class="stat-label">Trades</div><div class="tile-value" id="t-trades">--</div></div>
+          <div class="tile"><div class="stat-label">Realized P&amp;L</div><div class="tile-value" id="t-pnl">--</div></div>
+          <div class="tile"><div class="stat-label">Lagatar loss</div><div class="tile-value" id="t-losses">--</div></div>
+        </div>
+        <p class="hint" id="t-limits"></p>
+        <p class="hint neg" id="halt-reason" hidden></p>
+      </section>
+    </aside>
+
+    <section class="card wide-card" id="bottom-card">
+      <div class="card-head">
+        <div class="tabs" role="tablist">
+          <button type="button" role="tab" id="tab-trades" aria-selected="true" aria-controls="panel-trades">Trades</button>
+          <button type="button" role="tab" id="tab-logs" aria-selected="false" aria-controls="panel-logs">Logs</button>
+        </div>
+        <div class="tab-tools" id="trades-tools">
+          <span id="trades-summary"></span>
+          <button type="button" class="btn" id="btn-refresh-trades">Refresh</button>
+        </div>
+        <div class="tab-tools" id="logs-tools" hidden>
+          <select id="log-filter" aria-label="Log filter">
+            <option value="all">Sab logs</option>
+            <option value="problems">Sirf warning / error</option>
+          </select>
+          <label><input type="checkbox" id="log-auto" checked /> Auto refresh</label>
+          <button type="button" class="btn" id="btn-refresh-logs">Refresh</button>
+        </div>
+      </div>
+
+      <div id="panel-trades" role="tabpanel" aria-labelledby="tab-trades">
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Entry</th><th>Exit</th><th>Trade</th><th>Expiry</th><th>Legs (entry → exit)</th>
+                <th>Exit kyun</th><th class="num">Gross</th><th class="num">Charges</th><th class="num">Net</th>
+              </tr>
+            </thead>
+            <tbody id="trades-body"></tbody>
+          </table>
+        </div>
+        <div id="trades-empty" class="empty" hidden>Abhi tak koi trade band nahi hua</div>
+      </div>
+
+      <div id="panel-logs" role="tabpanel" aria-labelledby="tab-logs" hidden>
+        <div class="table-scroll logs-scroll">
+          <table class="data-table">
+            <thead><tr><th>Time</th><th>Level</th><th>Event</th><th>Details</th></tr></thead>
+            <tbody id="logs-body"></tbody>
+          </table>
+        </div>
+        <div id="logs-empty" class="empty" hidden>Koi log nahi</div>
+      </div>
     </section>
   </main>
 
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 <script>
+"use strict";
+
+const STRATEGY = "macd_itm_otm_spread";
+const INTERVAL_SEC = {{ candle_interval_sec }};
+// lightweight-charts formats time labels in UTC; shifting every timestamp by the IST offset
+// makes those labels read as IST wall-clock time.
+const IST_OFFSET_SEC = 19800;
+const chartTime = (unixSec) => unixSec + IST_OFFSET_SEC;
+
+const C = {
+  surface: "#1a1a19", grid: "#2c2c2a", axis: "#383835", muted: "#898781", text2: "#c3c2b7",
+  up: "#0ca30c", down: "#d03b3b", macd: "#3987e5", signal: "#d95926",
+  histUp: "rgba(12, 163, 12, 0.5)", histDown: "rgba(208, 59, 59, 0.5)",
+};
+
+const EXIT_REASON = {
+  FIXED_SL: "Stop-loss", TRAILING_STOP: "Trailing stop", OPPOSITE_MACD: "MACD ulta", MANUAL_EXIT: "Manual exit",
+  KILL_SWITCH: "Kill switch", SQUARE_OFF: "Square-off", DAILY_LOSS_LIMIT: "Din ka loss limit", BROKER_SL: "Broker SL",
+  RECOVERED: "Restart par band mili", EXTERNAL: "App ke bahar band hui",
+  OPPOSITE_ZERO_CROSS: "MACD ulta",
+};
+const BUTTON_NAME = { DEBIT: "Buying", CREDIT: "Selling", SINGLE_LEG: "Single leg" };
+
 const el = (id) => document.getElementById(id);
+const inr0 = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 });
+const inr2 = new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const istHms = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+const istHm = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false });
+const istDay = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short" });
 
-function fmtRs(v) {
-  if (v === null || v === undefined) return "--";
-  const sign = v < 0 ? "-" : "";
-  return sign + "₹" + Math.abs(v).toFixed(0);
+function rs(v, signed = true) {
+  if (v === null || v === undefined || Number.isNaN(v)) return "--";
+  const sign = !signed ? "" : v > 0 ? "+" : v < 0 ? "−" : "";
+  return sign + "₹" + inr0.format(Math.abs(v));
+}
+const px = (v) => (v === null || v === undefined ? "--" : inr2.format(v));
+const signClass = (v) => (v > 0 ? "pos" : v < 0 ? "neg" : "");
+function when(iso) {
+  if (!iso) return "--";
+  const d = new Date(iso);
+  const sameDay = istDay.format(d) === istDay.format(new Date());
+  return (sameDay ? "" : istDay.format(d) + ", ") + istHm.format(d);
+}
+function optionFor(direction, structure) {
+  if (structure === "CREDIT") return direction === "LONG" ? "PUT" : "CALL";
+  return direction === "LONG" ? "CALL" : "PUT";
+}
+function expiryText(rules) {
+  if (!rules) return "";
+  const name = rules.expiry === "MONTHLY" ? "Monthly expiry" : "Weekly (current) expiry";
+  return rules.min_days_to_expiry ? `${name}, kam se kam ${rules.min_days_to_expiry} din baaki` : name;
+}
+function cell(text, className) {
+  const td = document.createElement("td");
+  td.textContent = text;
+  if (className) td.className = className;
+  return td;
+}
+function tableRow(cells, className) {
+  const tr = document.createElement("tr");
+  if (className) tr.className = className;
+  cells.forEach((c) => tr.appendChild(c));
+  return tr;
 }
 
-// --- Trade markers on the price chart (which strategy entered/exited, and when) --------
+// --- Clock ------------------------------------------------------------------------
 
-const STRATEGY_COLORS = { atm_sell_macd_zero: "#ef4444", itm4_buy_macd_zero: "#22c55e" };
-const STRATEGY_LABELS = { atm_sell_macd_zero: "ATM Sell", itm4_buy_macd_zero: "ITM4 Buy" };
-const closedMarkersByStrategy = { atm_sell_macd_zero: [], itm4_buy_macd_zero: [] };
-const openMarkerByStrategy = { atm_sell_macd_zero: null, itm4_buy_macd_zero: null };
+function tickClock() { el("clock").textContent = istHms.format(new Date()); }
+setInterval(tickClock, 1000);
+tickClock();
 
-function isoToUnixSec(iso) {
-  return Math.floor(new Date(iso).getTime() / 1000);
+// --- Actions ----------------------------------------------------------------------
+
+function showMsg(text, className = "") {
+  const msg = el("action-msg");
+  msg.textContent = text;
+  msg.className = "action-msg " + className;
+  clearTimeout(showMsg.timer);
+  if (text) showMsg.timer = setTimeout(() => { msg.textContent = ""; }, 7000);
 }
 
-function updateChartMarkers() {
-  if (!priceSeries) return;
-  const all = [
-    ...closedMarkersByStrategy.atm_sell_macd_zero,
-    ...closedMarkersByStrategy.itm4_buy_macd_zero,
-    ...Object.values(openMarkerByStrategy).filter(Boolean),
-  ].sort((a, b) => a.time - b.time);
-  priceSeries.setMarkers(all);
+async function postAction(url, body) {
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const json = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      showMsg("Galti: " + (json.detail || "server ne mana kiya (" + resp.status + ")"), "neg");
+      return null;
+    }
+    return json;
+  } catch (err) {
+    showMsg("Server se connection nahi hua", "neg");
+    return null;
+  } finally {
+    refreshStatus();
+  }
+}
+
+el("btn-buying").onclick = () => postAction("/api/structure", { structure_type: "DEBIT" });
+el("btn-selling").onclick = () => postAction("/api/structure", { structure_type: "CREDIT" });
+
+async function requestDirection(direction) {
+  const option = optionFor(direction, lastStatus ? lastStatus.structure_preference : "DEBIT");
+  showMsg(`${direction} (${option}) bheja ja raha hai…`);
+  const result = await postAction("/api/direction", { direction });
+  if (result) {
+    showMsg(result.executed_immediately
+      ? `${direction} (${option}): MACD sahi hai, order bheja gaya`
+      : `${direction} (${option}): request Pending — upar message dekhein`, "pos");
+  }
+}
+el("btn-long").onclick = () => requestDirection("LONG");
+el("btn-short").onclick = () => requestDirection("SHORT");
+el("btn-cancel-pending").onclick = async () => {
+  const result = await postAction("/api/cancel-pending");
+  if (result) showMsg(result.cancelled ? "Pending request cancel ho gayi" : "Koi pending request nahi thi");
+};
+el("btn-exit-now").onclick = async () => {
+  if (!confirm("Khuli position abhi band karein? (profit ho ya loss)")) return;
+  if (await postAction("/api/exit-now")) showMsg("Exit order bheja gaya");
+};
+el("btn-kill-switch").onclick = async () => {
+  if (!confirm("KILL SWITCH: position band hogi aur aaj ke liye naye trade bhi band ho jayenge. Pakka?")) return;
+  if (await postAction("/api/kill-switch")) showMsg("Kill switch lag gaya — aaj trading band", "neg");
+};
+
+// --- Status -----------------------------------------------------------------------
+
+let lastStatus = null;
+
+function setPill(id, text, tone) {
+  const pill = el(id);
+  pill.textContent = text;
+  pill.className = "pill" + (tone ? " pill-" + tone : "");
 }
 
 function applyStatus(data) {
-  if (data.error) return;
-  el("mode-badge").textContent = "mode: " + data.mode;
-  el("market-badge").textContent = "market: " + (data.market_open ? "OPEN" : "CLOSED");
-  el("market-badge").className = "badge " + (data.market_open ? "badge-open" : "badge-closed");
-  el("spot-value").textContent = "Spot: " + (data.spot ? data.spot.toFixed(2) : "--");
-  el("vix-value").textContent = "VIX: " + (data.vix ? data.vix.toFixed(2) : "--");
+  if (!data || data.error) return;
+  const hadPosition = !!(lastStatus && lastStatus.open_position);
+  lastStatus = data;
+
+  // top bar
+  const live = data.mode === "live";
+  setPill("mode-pill", live ? "LIVE · asli paisa" : data.mode.toUpperCase(), live ? "critical" : "warn");
+  el("market-pill").className = "pill " + (data.market_open ? "pill-good" : "");
+  el("market-text").textContent = data.market_open ? "Market khula" : "Market band";
+
+  // Angel One price feed health - during market hours no fresh tick means SL/target run on stale prices.
+  const age = data.feed_age_sec;
+  let feedTone = "", feedText = "Data: market band";
+  if (data.market_open) {
+    if (age === null || age === undefined) { feedTone = "critical"; feedText = "Data nahi aaya"; }
+    else if (age <= 10) { feedTone = "good"; feedText = "Data live"; }
+    else if (age <= 30) { feedTone = "warn"; feedText = `Data ${age}s purana`; }
+    else { feedTone = "critical"; feedText = `Data ruka (${age}s)`; }
+  }
+  el("feed-pill").className = "pill" + (feedTone ? " pill-" + feedTone : "");
+  el("feed-text").textContent = feedText;
+  el("spot").textContent = data.spot ? inr2.format(data.spot) : "--";
+  el("vix").textContent = data.vix ? data.vix.toFixed(2) : "--";
+
+  renderControls(data);
+  renderPosition(data);
+  renderToday(data);
+
+  const hasPosition = !!data.open_position;
+  if (hadPosition !== hasPosition) {
+    refreshTrades();
+    refreshMarkers();
+  }
+}
+
+function renderControls(data) {
+  const structure = data.structure_preference;
+  const enabled = data.flagship_enabled;
+  const hasPosition = !!data.open_position;
+  setPill("flagship-pill", enabled ? "Strategy chalu" : "Strategy band", enabled ? "good" : "");
+
+  el("btn-buying").setAttribute("aria-pressed", String(structure === "DEBIT"));
+  el("btn-selling").setAttribute("aria-pressed", String(structure === "CREDIT"));
+  const rules = data.buttons ? data.buttons[structure] : null;
+  el("structure-hint").textContent = structure === "CREDIT"
+    ? `ITM option becho + OTM khareedo (hedge) · ${expiryText(rules)}`
+    : `ITM option khareedo + OTM becho (hedge) · ${expiryText(rules)}`;
+  el("long-label").textContent = "Long · " + optionFor("LONG", structure);
+  el("short-label").textContent = "Short · " + optionFor("SHORT", structure);
+
+  const blockReason = !enabled ? "Strategy band hai (config)" : hasPosition ? "Position pehle se khuli hai" : "";
+  for (const id of ["btn-long", "btn-short"]) {
+    el(id).disabled = !!blockReason;
+    el(id).title = blockReason;
+  }
+  el("btn-buying").disabled = !enabled;
+  el("btn-selling").disabled = !enabled;
+  el("btn-exit-now").disabled = !hasPosition;
+  el("btn-kill-switch").disabled = !enabled;
 
   const pending = data.pending_request;
+  el("pending-box").hidden = !pending;
   if (pending) {
-    el("pending-box").classList.remove("hidden");
-    el("pending-text").textContent = "Pending: " + pending.direction + " (waiting for MACD confirmation)";
-  } else {
-    el("pending-box").classList.add("hidden");
+    el("pending-title").textContent = `Pending: ${pending.direction} · ${optionFor(pending.direction, structure)}`;
+    el("pending-text").textContent = `${when(pending.requested_at)} se MACD confirm hone ka intezaar`;
   }
 
+  el("frozen-banner").hidden = !data.oms_frozen;
+  if (data.oms_frozen) el("frozen-banner").textContent = "⛔ " + data.oms_frozen;
+
+  const notice = data.entry_notice;
+  el("entry-notice").hidden = !notice;
+  if (notice) el("entry-notice").textContent = `⚠ ${when(notice.at)} — ${notice.message}`;
+}
+
+function renderPosition(data) {
   const pos = data.open_position;
-  const statusEl = el("position-status");
-  if (pos) {
-    statusEl.textContent = "Position: ACTIVE (" + pos.direction + ")";
-    statusEl.className = "position-status active";
-  } else {
-    statusEl.textContent = "Position: NONE";
-    statusEl.className = "position-status";
+  el("position-empty").hidden = !!pos;
+  el("position-body").hidden = !pos;
+  if (!pos) {
+    setPill("position-pill", "Koi nahi");
+    return;
   }
+  setPill("position-pill", `${pos.direction} · ${optionFor(pos.direction, pos.structure_type)}`, "accent");
 
-  const structureEl = el("structure-status");
-  structureEl.textContent = "Structure preference: " + (data.structure_preference || "--") +
-    " (applied at next entry - a VIX spike can still override it)";
+  const pnl = data.unrealized_pnl_rs;
+  el("pos-pnl").textContent = rs(pnl);
+  el("pos-pnl").className = "hero-num " + signClass(pnl);
+  el("pos-meta").textContent = `${BUTTON_NAME[pos.structure_type] || pos.structure_type} · ${pos.expiry}\nentry ${when(pos.entry_time)}`;
+  el("pos-meta").style.whiteSpace = "pre-line";
 
-  // highlight whichever of Buying/Selling is currently active
-  el("btn-buying").classList.toggle("selected", data.structure_preference === "DEBIT");
-  el("btn-selling").classList.toggle("selected", data.structure_preference === "CREDIT");
+  const rules = data.exit_rules;
+  const sl = rules.sl_amount_rs;
+  const target = rules.target_amount_rs;
+  const span = sl + target;
+  const zeroPct = (sl / span) * 100;
+  const currentPct = ((Math.max(-sl, Math.min(target, pnl)) + sl) / span) * 100;
+  const fill = el("meter-fill");
+  fill.style.left = Math.min(zeroPct, currentPct) + "%";
+  fill.style.width = Math.abs(currentPct - zeroPct) + "%";
+  fill.className = "meter-fill " + (pnl >= 0 ? "pos" : "neg");
+  el("meter-zero").style.left = zeroPct + "%";
+  el("meter-marker").style.left = currentPct + "%";
+  el("meter-sl").textContent = "SL " + rs(-sl);
+  el("meter-target").textContent = "Target " + rs(target);
 
-  // Long/Short always end up as one specific option type once combined with the current
-  // structure preference (DEBIT: Long->CE/Short->PE, CREDIT: Long->PE/Short->CE) - show
-  // that directly on the button so it's never a guess.
-  const isCredit = data.structure_preference === "CREDIT";
-  el("btn-long").textContent = "Long (" + (isCredit ? "Put" : "Call") + ")";
-  el("btn-short").textContent = "Short (" + (isCredit ? "Call" : "Put") + ")";
+  el("trail-info").textContent = pos.trail_active
+    ? `Trailing ON · sabse zyada ${rs(pos.peak_profit_rs)} · ${rs(pos.peak_profit_rs - rules.trail_gap_rs)} par exit`
+    : `Stop-loss ${rs(-sl)} · ${rs(target)} par trailing shuru (gap ${rs(rules.trail_gap_rs, false)})`;
 
-  if (data.zero_cross) {
-    Object.entries(data.zero_cross).forEach(([name, zc]) => {
-      const statusEl = el("zc-status-" + name);
-      if (statusEl) {
-        if (zc.open_position) {
-          statusEl.textContent = "Position: ACTIVE (" + zc.open_position.direction + ") | Unrealized: " + fmtRs(zc.unrealized_pnl_rs);
-          statusEl.className = "position-status active";
-        } else {
-          statusEl.textContent = "Position: NONE";
-          statusEl.className = "position-status";
-        }
-      }
-
-      const leg = zc.open_position && zc.open_position.legs && zc.open_position.legs[0];
-      if (zc.open_position && leg && zc.open_position.entry_time) {
-        openMarkerByStrategy[name] = {
-          time: isoToUnixSec(zc.open_position.entry_time),
-          position: "belowBar",
-          color: STRATEGY_COLORS[name],
-          shape: leg.side === "BUY" ? "arrowUp" : "arrowDown",
-          text: STRATEGY_LABELS[name] + " Entry",
-        };
-      } else {
-        openMarkerByStrategy[name] = null;
-      }
-    });
-    updateChartMarkers();
+  const body = el("legs-body");
+  body.replaceChildren();
+  for (const leg of pos.legs) {
+    body.appendChild(tableRow([
+      cell(`${leg.role} ${leg.side === "BUY" ? "Buy" : "Sell"}`, "nowrap"),
+      cell(`${leg.strike} ${leg.option_type}`, "nowrap"),
+      cell(px(leg.entry_price), "num"),
+      cell(px(leg.ltp), "num"),
+      cell(rs(leg.pnl_rs), "num " + signClass(leg.pnl_rs)),
+    ]));
   }
 }
 
-function connectWs() {
+function renderToday(data) {
+  const day = data.daily_state;
+  const limits = data.risk_limits;
+  el("t-trades").textContent = `${day.trades_taken} / ${limits.max_trades_per_day}`;
+  el("t-pnl").textContent = rs(day.realized_pnl_rs);
+  el("t-pnl").className = "tile-value " + signClass(day.realized_pnl_rs);
+  el("t-losses").textContent = `${day.consecutive_losses} / ${limits.max_consecutive_losses}`;
+  el("t-limits").textContent = `Din ka loss limit ${rs(-limits.daily_loss_limit_rs)} — koi bhi limit poori hui to aaj naye trade band`;
+  if (day.trading_halted) {
+    setPill("halt-pill", "⛔ Trading band", "critical");
+  } else {
+    setPill("halt-pill", "✓ Trading chalu", "good");
+  }
+  el("halt-reason").hidden = !day.trading_halted;
+  el("halt-reason").textContent = day.halt_reason ? "Wajah: " + day.halt_reason : "";
+}
+
+async function refreshStatus() {
+  try {
+    const resp = await fetch("/api/status");
+    if (resp.ok) applyStatus(await resp.json());
+  } catch (err) { /* the status socket keeps retrying */ }
+}
+
+function connectStatusWs() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const ws = new WebSocket(proto + "//" + location.host + "/ws/status");
+  ws.onopen = () => { setPill("conn-pill", "", "good"); el("conn-pill").innerHTML = '<span class="dot"></span><span>Live</span>'; };
   ws.onmessage = (evt) => applyStatus(JSON.parse(evt.data));
-  ws.onclose = () => setTimeout(connectWs, 2000);
+  ws.onclose = () => {
+    setPill("conn-pill", "", "critical");
+    el("conn-pill").innerHTML = '<span class="dot"></span><span>Disconnected</span>';
+    setTimeout(connectStatusWs, 2000);
+  };
   ws.onerror = () => ws.close();
 }
-connectWs();
 
-async function postAction(url, body) {
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  return resp.json();
-}
+// --- Trades -----------------------------------------------------------------------
 
-el("btn-long").onclick = () => postAction("/api/direction", { direction: "LONG" });
-el("btn-short").onclick = () => postAction("/api/direction", { direction: "SHORT" });
-el("btn-cancel-pending").onclick = () => postAction("/api/cancel-pending");
-el("btn-buying").onclick = () => postAction("/api/structure", { structure_type: "DEBIT" });
-el("btn-selling").onclick = () => postAction("/api/structure", { structure_type: "CREDIT" });
-el("btn-exit-now").onclick = () => {
-  if (confirm("Exit current position now, regardless of P&L?")) postAction("/api/exit-now");
-};
-el("btn-kill-switch").onclick = () => {
-  if (confirm("Kill switch: halt trading and force-exit any open position?")) postAction("/api/kill-switch");
-};
+let closedTrades = [];
 
 async function refreshTrades() {
-  const trades = await (await fetch("/api/trades")).json();
-  el("trades-body").innerHTML = trades.map(t => `
-    <tr>
-      <td>${t.exit_time ? new Date(t.exit_time).toLocaleString() : "--"}</td>
-      <td>${t.direction}</td>
-      <td>${t.structure_type}</td>
-      <td>${t.expiry}</td>
-      <td>${t.exit_reason ?? "--"}</td>
-      <td class="${t.realized_pnl_rs >= 0 ? 'pos' : 'neg'}">${fmtRs(t.realized_pnl_rs)}</td>
-    </tr>
-  `).join("");
+  try {
+    const [trades, summary] = await Promise.all([
+      fetch(`/api/trades?strategy_name=${STRATEGY}`).then((r) => r.json()),
+      fetch(`/api/strategy-summary?strategy_name=${STRATEGY}`).then((r) => r.json()),
+    ]);
+    closedTrades = trades;
+    const body = el("trades-body");
+    body.replaceChildren();
+    for (const t of trades) {
+      const legs = (t.legs || [])
+        .map((l) => `${l.side === "BUY" ? "Buy " : "Sell"} ${l.strike} ${l.option_type}   ${px(l.entry_price)} → ${px(l.exit_price)}`)
+        .join("\n");
+      body.appendChild(tableRow([
+        cell(when(t.entry_time), "nowrap"),
+        cell(when(t.exit_time), "nowrap"),
+        cell(`${t.direction} · ${optionFor(t.direction, t.structure_type)} (${BUTTON_NAME[t.structure_type] || t.structure_type})`, "nowrap"),
+        cell(t.expiry, "nowrap"),
+        cell(legs, "legs-cell"),
+        cell(EXIT_REASON[t.exit_reason] || t.exit_reason || "--", "nowrap"),
+        cell(rs(t.realized_pnl_rs), "num " + signClass(t.realized_pnl_rs)),
+        cell(rs(t.charges_rs, false), "num muted"),
+        cell(rs(t.net_pnl_rs), "num " + signClass(t.net_pnl_rs)),
+      ]));
+    }
+    el("trades-empty").hidden = trades.length > 0;
+    el("trades-summary").textContent = summary.trade_count
+      ? `${summary.trade_count} ${summary.trade_count === 1 ? "trade" : "trades"} · jeet ${Math.round(summary.win_rate_pct)}% · net ${rs(summary.net_pnl_rs)}`
+      : "";
+    refreshMarkers();
+  } catch (err) { /* keep the previous table */ }
 }
 el("btn-refresh-trades").onclick = refreshTrades;
-refreshTrades();
+setInterval(refreshTrades, 30000);
+
+// --- Logs -------------------------------------------------------------------------
+
+function parseLogLine(line) {
+  try {
+    const { event, level, timestamp, ...rest } = JSON.parse(line);
+    return {
+      time: timestamp ? istHms.format(new Date(timestamp)) : "",
+      level: String(level || "info").toLowerCase(),
+      event: String(event || "").replaceAll("_", " "),
+      details: Object.entries(rest)
+        .map(([k, v]) => `${k}=${typeof v === "object" && v !== null ? JSON.stringify(v) : v}`)
+        .join("   "),
+    };
+  } catch (err) {
+    const m = line.match(/^(DEBUG|INFO|WARNING|ERROR|CRITICAL):\s*(.*)$/);
+    return { time: "", level: m ? m[1].toLowerCase() : "info", event: m ? "server" : "", details: m ? m[2] : line };
+  }
+}
+
+const LEVEL_ICON = { info: "•", debug: "•", warning: "▲", error: "✕", critical: "✕" };
 
 async function refreshLogs() {
-  const data = await (await fetch("/api/logs")).json();
-  el("log-view").textContent = (data.lines || []).join("");
-  const view = el("log-view");
-  view.scrollTop = view.scrollHeight;
+  try {
+    const data = await (await fetch("/api/logs?lines=400")).json();
+    const onlyProblems = el("log-filter").value === "problems";
+    const entries = (data.lines || [])
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map(parseLogLine)
+      .reverse()
+      .filter((e) => !onlyProblems || ["warning", "error", "critical"].includes(e.level));
+    const body = el("logs-body");
+    body.replaceChildren();
+    for (const e of entries) {
+      const levelTd = document.createElement("td");
+      const badge = document.createElement("span");
+      badge.className = "level level-" + e.level;
+      badge.textContent = `${LEVEL_ICON[e.level] || "•"} ${e.level.toUpperCase()}`;
+      levelTd.appendChild(badge);
+      const rowClass = e.level === "warning" ? "row-warning" : ["error", "critical"].includes(e.level) ? "row-error" : "";
+      body.appendChild(tableRow([cell(e.time, "mono muted nowrap"), levelTd, cell(e.event, "log-event"), cell(e.details, "log-details")], rowClass));
+    }
+    el("logs-empty").hidden = entries.length > 0;
+  } catch (err) { /* keep the previous table */ }
 }
 el("btn-refresh-logs").onclick = refreshLogs;
-refreshLogs();
+el("log-filter").onchange = refreshLogs;
+setInterval(() => {
+  if (el("log-auto").checked && !el("panel-logs").hidden) refreshLogs();
+}, 5000);
 
-// --- Zero-cross strategy panels (ATM Sell / ITM4 Buy) ------------------------
+// --- Tabs -------------------------------------------------------------------------
 
-const ZC_STRATEGIES = ["atm_sell_macd_zero", "itm4_buy_macd_zero"];
+function selectTab(name) {
+  const logs = name === "logs";
+  el("tab-trades").setAttribute("aria-selected", String(!logs));
+  el("tab-logs").setAttribute("aria-selected", String(logs));
+  el("panel-trades").hidden = logs;
+  el("panel-logs").hidden = !logs;
+  el("trades-tools").hidden = logs;
+  el("logs-tools").hidden = !logs;
+  if (logs) refreshLogs();
+  history.replaceState(null, "", logs ? "#logs" : "#trades");
+}
+el("tab-trades").onclick = () => selectTab("trades");
+el("tab-logs").onclick = () => selectTab("logs");
 
-async function refreshZeroCrossTrades(name) {
-  const trades = await (await fetch("/api/trades?strategy_name=" + name)).json();
-  const tbody = document.querySelector('.trades-table[data-strategy="' + name + '"] tbody');
-  tbody.innerHTML = trades.map((t) => {
-    const leg = (t.legs && t.legs[0]) || {};
-    return `
-      <tr>
-        <td>${t.entry_time ? new Date(t.entry_time).toLocaleTimeString() : "--"}</td>
-        <td>${t.exit_time ? new Date(t.exit_time).toLocaleTimeString() : "--"}</td>
-        <td>${leg.side || ""} ${leg.option_type || ""} ${leg.strike ?? "--"}</td>
-        <td>${leg.entry_price != null ? leg.entry_price.toFixed(2) : "--"}</td>
-        <td>${leg.exit_price != null ? leg.exit_price.toFixed(2) : "--"}</td>
-        <td class="${t.realized_pnl_rs >= 0 ? 'pos' : 'neg'}">${fmtRs(t.realized_pnl_rs)}</td>
-        <td>${fmtRs(t.charges_rs)}</td>
-        <td class="${t.net_pnl_rs >= 0 ? 'pos' : 'neg'}">${fmtRs(t.net_pnl_rs)}</td>
-      </tr>`;
-  }).join("");
+// --- Chart ------------------------------------------------------------------------
 
-  const summary = await (await fetch("/api/strategy-summary?strategy_name=" + name)).json();
-  el("summary-" + name).textContent =
-    "Trades: " + summary.trade_count +
-    " | Win rate: " + summary.win_rate_pct.toFixed(0) + "%" +
-    " | Gross: " + fmtRs(summary.gross_pnl_rs) +
-    " | Charges: " + fmtRs(summary.charges_rs) +
-    " | Net: " + fmtRs(summary.net_pnl_rs);
+let priceChart, macdChart, candleSeries, macdLine, signalLine, histSeries;
+let lastBar = null;
+let lastMacd = null;
+let barCount = 0;
+let currentRange = 30;
+const candleTimes = new Set();
+const macdByTime = new Map();
 
-  const markers = [];
-  trades.forEach((t) => {
-    const leg = (t.legs && t.legs[0]) || {};
-    if (t.entry_time) {
-      markers.push({
-        time: isoToUnixSec(t.entry_time),
-        position: "belowBar",
-        color: STRATEGY_COLORS[name],
-        shape: leg.side === "BUY" ? "arrowUp" : "arrowDown",
-        text: STRATEGY_LABELS[name] + " Entry",
-      });
-    }
-    if (t.exit_time) {
-      markers.push({
-        time: isoToUnixSec(t.exit_time),
-        position: "aboveBar",
-        color: STRATEGY_COLORS[name],
-        shape: leg.side === "BUY" ? "arrowDown" : "arrowUp",  // exit is the opposite action of entry
-        text: STRATEGY_LABELS[name] + " Exit (" + (t.exit_reason || "") + ")",
-      });
-    }
-  });
-  closedMarkersByStrategy[name] = markers;
-  updateChartMarkers();
+function chartOptions(showTime) {
+  return {
+    autoSize: true,
+    layout: { background: { type: "solid", color: C.surface }, textColor: C.muted, fontSize: 11, fontFamily: "system-ui, -apple-system, Segoe UI, sans-serif" },
+    grid: { vertLines: { color: C.grid }, horzLines: { color: C.grid } },
+    // wider than any label either pane draws, so both price scales stay the same width and
+    // the candles sit exactly above their MACD bars
+    rightPriceScale: { borderColor: C.axis, minimumWidth: 96 },
+    timeScale: { borderColor: C.axis, timeVisible: true, secondsVisible: false, rightOffset: 4, visible: showTime },
+    crosshair: {
+      mode: LightweightCharts.CrosshairMode.Normal,
+      vertLine: { color: C.muted, style: LightweightCharts.LineStyle.Solid, labelBackgroundColor: C.axis },
+      horzLine: { color: C.muted, style: LightweightCharts.LineStyle.Solid, labelBackgroundColor: C.axis },
+    },
+    localization: { priceFormatter: (p) => inr2.format(p) },
+  };
 }
 
-function refreshAllZeroCrossTrades() {
-  ZC_STRATEGIES.forEach(refreshZeroCrossTrades);
+function legendItem(parent, label, value, keyColor) {
+  const span = document.createElement("span");
+  span.className = "legend-key";
+  if (keyColor) {
+    const key = document.createElement("span");
+    key.className = "line-key";
+    key.style.background = keyColor;
+    span.appendChild(key);
+  }
+  span.appendChild(document.createTextNode(label + " "));
+  const b = document.createElement("b");
+  b.textContent = value;
+  span.appendChild(b);
+  parent.appendChild(span);
 }
-refreshAllZeroCrossTrades();
-setInterval(refreshAllZeroCrossTrades, 5000);
 
-document.querySelectorAll('[data-action="exit-now"]').forEach((btn) => {
-  btn.onclick = () => {
-    if (confirm("Exit " + btn.dataset.strategy + " now, regardless of P&L?")) {
-      postAction("/api/zero-cross/" + btn.dataset.strategy + "/exit-now");
-    }
-  };
-});
-document.querySelectorAll('[data-action="kill-switch"]').forEach((btn) => {
-  btn.onclick = () => {
-    if (confirm("Kill switch for " + btn.dataset.strategy + ": halt it and force-exit any open position?")) {
-      postAction("/api/zero-cross/" + btn.dataset.strategy + "/kill-switch");
-    }
-  };
-});
+function setPriceLegend(bar) {
+  const legend = el("price-legend");
+  legend.replaceChildren();
+  if (!bar) return;
+  legendItem(legend, "O", inr2.format(bar.open));
+  legendItem(legend, "H", inr2.format(bar.high));
+  legendItem(legend, "L", inr2.format(bar.low));
+  legendItem(legend, "C", inr2.format(bar.close));
+}
 
-// --- Live tick-by-tick Nifty chart + MACD sub-chart ---------------------------
-
-let priceChart, priceSeries, macdChart, macdLineSeries, signalLineSeries, histSeries;
-
-// Today's 09:15 IST as a unix-seconds timestamp - pinned as the chart's left edge so the
-// market-open candle never scrolls out of view as the day's ticks accumulate.
-function todayMarketOpenUnixSec() {
-  const now = new Date();
-  const istOpen = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 3, 45, 0)); // 09:15 IST = 03:45 UTC
-  return Math.floor(istOpen.getTime() / 1000);
+function setMacdLegend(point) {
+  const legend = el("macd-legend");
+  legend.replaceChildren();
+  const fmt = (v) => (point ? v.toFixed(2) : "--");
+  legendItem(legend, "MACD", fmt(point && point.macd), C.macd);
+  legendItem(legend, "Signal", fmt(point && point.signal), C.signal);
+  legendItem(legend, "Histogram", fmt(point && point.histogram), C.muted);
 }
 
 function initCharts() {
-  const marketOpen = todayMarketOpenUnixSec();
-  const marketClose = marketOpen + 6.25 * 3600; // 09:15 -> 15:30
-
-  const chartTheme = {
-    layout: { background: { color: "#171a21" }, textColor: "#e6e8eb" },
-    grid: { vertLines: { color: "#1c1f27" }, horzLines: { color: "#1c1f27" } },
-    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-    timeScale: { timeVisible: true, secondsVisible: true, fixLeftEdge: true, rightOffset: 4, borderColor: "#2a2e38" },
-    rightPriceScale: { borderColor: "#2a2e38" },
-  };
-
-  priceChart = LightweightCharts.createChart(el("price-chart"), chartTheme);
-  priceSeries = priceChart.addAreaSeries({
-    lineColor: "#3b82f6", lineWidth: 2,
-    topColor: "rgba(59, 130, 246, 0.28)", bottomColor: "rgba(59, 130, 246, 0.02)",
-    title: "Nifty Spot", crosshairMarkerVisible: true, crosshairMarkerRadius: 4,
-    lastValueVisible: true, priceLineVisible: true, priceLineColor: "#3b82f6",
+  priceChart = LightweightCharts.createChart(el("price-chart"), chartOptions(false));
+  candleSeries = priceChart.addCandlestickSeries({
+    upColor: C.up, downColor: C.down, wickUpColor: C.up, wickDownColor: C.down, borderVisible: false,
+    priceLineColor: C.muted, priceLineStyle: LightweightCharts.LineStyle.Solid,
   });
 
-  macdChart = LightweightCharts.createChart(el("macd-chart"), chartTheme);
-  histSeries = macdChart.addHistogramSeries({ color: "#8a8f98", priceLineVisible: false });
-  macdLineSeries = macdChart.addLineSeries({ color: "#3b82f6", lineWidth: 2, title: "MACD", crosshairMarkerVisible: true });
-  signalLineSeries = macdChart.addLineSeries({ color: "#f59e0b", lineWidth: 1, title: "Signal", crosshairMarkerVisible: true });
-  macdLineSeries.createPriceLine({
-    price: 0, color: "#8a8f98", lineWidth: 1,
-    lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: "zero",
-  });
+  macdChart = LightweightCharts.createChart(el("macd-chart"), chartOptions(true));
+  histSeries = macdChart.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false });
+  macdLine = macdChart.addLineSeries({ color: C.macd, lineWidth: 2, priceLineVisible: false, crosshairMarkerRadius: 4 });
+  signalLine = macdChart.addLineSeries({ color: C.signal, lineWidth: 2, priceLineVisible: false, crosshairMarkerRadius: 4 });
+  macdLine.createPriceLine({ price: 0, color: C.axis, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: false });
 
-  priceChart.timeScale().setVisibleRange({ from: marketOpen, to: marketClose });
-  macdChart.timeScale().setVisibleRange({ from: marketOpen, to: marketClose });
-
-  // Keep both charts' visible range and crosshair in lockstep, so hovering/scrolling one
-  // moves the other to the exact same moment in time.
+  // One time axis for both panes: scrolling/zooming either moves the other.
   let syncingRange = false;
-  const linkTimeScales = (a, b) => {
-    a.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-      if (syncingRange || !range) return;
-      syncingRange = true;
-      b.timeScale().setVisibleLogicalRange(range);
-      syncingRange = false;
-    });
-  };
-  linkTimeScales(priceChart, macdChart);
-  linkTimeScales(macdChart, priceChart);
+  const linkRanges = (from, to) => from.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+    if (syncingRange || !range) return;
+    syncingRange = true;
+    to.timeScale().setVisibleLogicalRange(range);
+    syncingRange = false;
+  });
+  linkRanges(priceChart, macdChart);
+  linkRanges(macdChart, priceChart);
 
-  const linkCrosshair = (source, sourceSeries, target, targetSeries) => {
-    source.subscribeCrosshairMove((param) => {
-      if (!param.time || !param.point) {
-        target.clearCrosshairPosition();
-        return;
-      }
-      const data = param.seriesData.get(sourceSeries);
-      const value = data ? (data.value ?? data.close ?? 0) : 0;
-      target.setCrosshairPosition(value, param.time, targetSeries);
-    });
-  };
-  linkCrosshair(priceChart, priceSeries, macdChart, macdLineSeries);
-  linkCrosshair(macdChart, macdLineSeries, priceChart, priceSeries);
+  // One crosshair across both panes, with the hovered values in each legend.
+  let syncingCrosshair = false;
+  priceChart.subscribeCrosshairMove((param) => {
+    if (syncingCrosshair) return;
+    const hovering = param.time !== undefined && param.point;
+    setPriceLegend(hovering ? param.seriesData.get(candleSeries) || lastBar : lastBar);
+    setMacdLegend(hovering ? macdByTime.get(param.time) || lastMacd : lastMacd);
+    syncingCrosshair = true;
+    if (hovering && macdByTime.has(param.time)) macdChart.setCrosshairPosition(macdByTime.get(param.time).macd, param.time, macdLine);
+    else macdChart.clearCrosshairPosition();
+    syncingCrosshair = false;
+  });
+  macdChart.subscribeCrosshairMove((param) => {
+    if (syncingCrosshair) return;
+    const hovering = param.time !== undefined && param.point;
+    setMacdLegend(hovering ? macdByTime.get(param.time) || lastMacd : lastMacd);
+    const bar = hovering ? param.seriesData.get(macdLine) && candleAt(param.time) : null;
+    setPriceLegend(bar || lastBar);
+    syncingCrosshair = true;
+    if (bar) priceChart.setCrosshairPosition(bar.close, param.time, candleSeries);
+    else priceChart.clearCrosshairPosition();
+    syncingCrosshair = false;
+  });
 
-  const resize = () => {
-    priceChart.applyOptions({ width: el("price-chart").clientWidth });
-    macdChart.applyOptions({ width: el("macd-chart").clientWidth });
+  document.querySelectorAll("#range-buttons button").forEach((button) => {
+    button.onclick = () => applyRange(Number(button.dataset.minutes));
+  });
+}
+
+const barsByTime = new Map();
+const candleAt = (time) => barsByTime.get(time);
+
+function toMacdPoint(p) {
+  return { time: chartTime(p.time), macd: p.macd, signal: p.signal, histogram: p.histogram };
+}
+
+function pushMacd(point) {
+  macdByTime.set(point.time, point);
+  lastMacd = point;
+}
+
+function applyRange(minutes) {
+  currentRange = minutes;
+  document.querySelectorAll("#range-buttons button").forEach((b) => b.classList.toggle("active", Number(b.dataset.minutes) === minutes));
+  if (!barCount) return;
+  if (minutes === 0) {
+    priceChart.timeScale().fitContent();
+    return;
+  }
+  const bars = Math.round((minutes * 60) / INTERVAL_SEC);
+  priceChart.timeScale().setVisibleLogicalRange({ from: Math.max(-2, barCount - bars), to: barCount + 3 });
+}
+
+async function loadChartHistory() {
+  try {
+    const data = await (await fetch("/api/chart")).json();
+    const bars = data.candles.map((c) => ({ time: chartTime(c.time), open: c.open, high: c.high, low: c.low, close: c.close }));
+    const points = data.macd.map(toMacdPoint);
+
+    candleTimes.clear(); barsByTime.clear(); macdByTime.clear();
+    bars.forEach((b) => { candleTimes.add(b.time); barsByTime.set(b.time, b); });
+    points.forEach(pushMacd);
+
+    candleSeries.setData(bars);
+    histSeries.setData(points.map((p) => ({ time: p.time, value: p.histogram, color: p.histogram >= 0 ? C.histUp : C.histDown })));
+    macdLine.setData(points.map((p) => ({ time: p.time, value: p.macd })));
+    signalLine.setData(points.map((p) => ({ time: p.time, value: p.signal })));
+
+    barCount = bars.length;
+    lastBar = bars.length ? bars[bars.length - 1] : null;
+    lastMacd = points.length ? points[points.length - 1] : null;
+    el("chart-empty").hidden = barCount > 0;
+    setPriceLegend(lastBar);
+    setMacdLegend(lastMacd);
+    applyRange(currentRange);
+    refreshMarkers();
+  } catch (err) { /* chart stays as it was; the tick socket reconnect retries */ }
+}
+
+function refreshMarkers() {
+  if (!candleSeries) return;
+  const markers = [];
+  const snap = (iso) => {
+    if (!iso) return null;
+    const t = chartTime(Math.floor(new Date(iso).getTime() / 1000 / INTERVAL_SEC) * INTERVAL_SEC);
+    return candleTimes.has(t) ? t : null;
   };
-  new ResizeObserver(resize).observe(el("chart-card"));
-  resize();
+  const add = (trade, isEntry) => {
+    const time = snap(isEntry ? trade.entry_time : trade.exit_time);
+    if (time === null) return;
+    const long = trade.direction === "LONG";
+    markers.push(isEntry
+      ? { time, position: long ? "belowBar" : "aboveBar", shape: long ? "arrowUp" : "arrowDown", color: C.macd,
+          text: `${long ? "Long" : "Short"} ${optionFor(trade.direction, trade.structure_type)}` }
+      : { time, position: long ? "aboveBar" : "belowBar", shape: "circle", color: C.text2,
+          text: "Exit · " + (EXIT_REASON[trade.exit_reason] || trade.exit_reason || "") });
+  };
+  closedTrades.forEach((t) => { add(t, true); add(t, false); });
+  if (lastStatus && lastStatus.open_position) add(lastStatus.open_position, true);
+  markers.sort((a, b) => a.time - b.time);
+  candleSeries.setMarkers(markers);
 }
 
 function connectTicksWs() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const ws = new WebSocket(proto + "//" + location.host + "/ws/ticks");
+  ws.onopen = () => loadChartHistory();
   ws.onmessage = (evt) => {
     const msg = JSON.parse(evt.data);
-    const t = Math.floor(new Date(msg.ts).getTime() / 1000);
-    if (msg.type === "tick") {
-      priceSeries.update({ time: t, value: msg.spot });
+    const time = chartTime(msg.time);
+    if (msg.type === "candle") {
+      if (lastBar && time < lastBar.time) return;
+      const bar = { time, open: msg.open, high: msg.high, low: msg.low, close: msg.close };
+      candleSeries.update(bar);
+      if (!candleTimes.has(time)) { candleTimes.add(time); barCount += 1; }
+      barsByTime.set(time, bar);
+      lastBar = bar;
+      el("chart-empty").hidden = true;
+      setPriceLegend(bar);
     } else if (msg.type === "macd") {
-      macdLineSeries.update({ time: t, value: msg.macd });
-      signalLineSeries.update({ time: t, value: msg.signal });
-      histSeries.update({ time: t, value: msg.histogram, color: msg.histogram >= 0 ? "#22c55e" : "#ef4444" });
+      if (lastMacd && time < lastMacd.time) return;
+      const point = { time, macd: msg.macd, signal: msg.signal, histogram: msg.histogram };
+      histSeries.update({ time, value: point.histogram, color: point.histogram >= 0 ? C.histUp : C.histDown });
+      macdLine.update({ time, value: point.macd });
+      signalLine.update({ time, value: point.signal });
+      pushMacd(point);
+      setMacdLegend(point);
     }
   };
   ws.onclose = () => setTimeout(connectTicksWs, 2000);
   ws.onerror = () => ws.close();
 }
 
+// --- Start ------------------------------------------------------------------------
+
+selectTab(location.hash === "#logs" ? "logs" : "trades");
 initCharts();
+connectStatusWs();
 connectTicksWs();
+refreshStatus();
+refreshTrades();
 </script>
 </body>
 </html>

@@ -1,54 +1,72 @@
-# Global system config. Nothing sensitive here - credentials live in config/.env only.
+# =============================================================================
+# APP SETTINGS   (strategy ki settings: config/strategies.yaml)
+#
+# Kaise badlein:
+#   1. Value badlo, file save karo
+#   2. Check karo:   .venv\Scripts\python.exe scripts\check_config.py
+#   3. App restart karo - nayi settings restart ke baad hi lagti hain
+#
+# Spelling galat hui ya galat value di to app start NAHI hoga, aur check_config
+# batayega kaunsi setting galat hai. Password / API key yahan NAHI - sirf config/.env mein.
+# =============================================================================
 
-mode: paper  # paper | live | backtest
+mode: live            # paper = nakli paisa (testing) | live = ASLI orders (alag se lock bhi hai) | backtest
 timezone: Asia/Kolkata
 
 underlying: NIFTY
-lot_size: 65  # NSE Nifty lot size - confirmed live from scrip master (2026-08-16); verify/update if NSE revises it
-risk_free_rate: 0.065
+lot_size: 65           # NSE Nifty lot size - NSE badle to yahan badlo
+risk_free_rate: 0.065  # delta nikalne ke liye byaaj dar (6.5% = 0.065)
 
 market_hours:
   open: "09:15"
   close: "15:30"
 
-square_off:
+square_off:            # is time par app khula trade zabardasti band karti hai
   normal_time: "15:15"
-  expiry_day_time: "15:00"
+  expiry_day_time: "15:00"      # jis din trade ki expiry ho
 
 scheduler:
-  daily_relogin_time: "08:45"
+  daily_relogin_time: "08:45"   # roz subah Angel One mein dobara login
+  daily_reset_time: "08:30"     # kal ki bachi hui Pending request cancel
+  eod_vix_capture_time: "15:35" # aaj ka India VIX close save (VIX override isi se chalta hai)
 
-paper_trading:
-  starting_capital_rs: 20000   # only used to simulate margin checks in PaperBroker
+risk:                  # din ki safety - inme se koi bhi hit hua to us din naye trade band
+  daily_loss_limit_rs: 8000       # din ka total loss itna hua to band
+  max_consecutive_losses: 2       # lagatar itne loss hue to band
+  max_trades_per_day: 2           # din mein max itne trade
 
-risk:
-  daily_loss_limit_rs: 8000       # ~ 2 trades x sl_amount_rs, hard ceiling for the day
-  max_consecutive_losses: 2
-  max_trades_per_day: 2
-  max_lots_per_trade: 1
-  max_concurrent_positions: 1
-  max_slippage_pct: 1.0
-  api_failure_threshold: 3
-  api_failure_window_sec: 60
+oms:                   # orders kaise jaate hain
+  product_type: INTRADAY          # INTRADAY hi rakhein (roz ke square-off ke saath match)
+  entry_slippage_buffer_pts: 1.0  # entry LIMIT order: buy = LTP + itne rupaye, sell = LTP - itne rupaye
+  entry_retry_attempts: 3         # Buying mein doosri (OTM) leg na lage to kitni baar dobara koshish
+  entry_retry_delay_sec: 1.0      # har dobara koshish ke beech itne second
+  fill_timeout_sec: 10            # order bhejne ke baad itne second fill ka intezaar, phir cancel
+  fill_poll_interval_sec: 2       # intezaar ke dauraan har itne second Angel One se status poochna.
+                                  # 1 se kam mat karein - Angel One "exceeding access rate" bol kar jawab rok deta hai
+  exit_attempts: 3                # exit adhura fill hua to bachi qty kitni baar dobara bhejna
+  sl_limit_buffer_pts: 5.0        # broker backup SL: limit price = trigger + itne rupaye
 
-oms:
-  product_type: INTRADAY          # MIS - matches mandatory same-day square-off
-  entry_slippage_buffer_pts: 1.0  # marketable-limit buffer for entries
-  safety_net_sl_buffer_pts: 5.0   # buffer between trigger and limit price on the broker-side backup SL
+paper_trading:         # sirf paper mode ke liye
+  starting_capital_rs: 20000      # nakli capital
+  slippage_pct: 0.1               # nakli fill LTP se itne % kharab (buy mehenga, sell sasta)
+  simulate_margin_check: false    # true = paper mein bhi starting_capital_rs se margin check. Live mein hamesha hota hai
+
+market_data:
+  greeks_refresh_interval_sec: 5  # options ka delta har itne second mein dobara nikalta hai
 
 database:
   url: "sqlite:///data_store/angel_auto.db"
 
 logging:
-  level: INFO
+  level: INFO          # DEBUG | INFO | WARNING | ERROR
   file: "data_store/logs/angel_auto.log"
 
 dashboard:
   host: "0.0.0.0"
-  port: 8000
+  port: 8000           # browser mein http://127.0.0.1:8000
 
-charges:
-  brokerage_per_order_rs: 40.0   # confirmed rate: 1 lot (65 qty) = Rs 40 per order (buy or sell)
+charges:               # brokerage + tax ka andaaza (net P&L ke liye) - apne contract note se milayein
+  brokerage_per_order_rs: 40.0    # har order (buy ya sell) par
   stt_sell_pct: 0.1
   exchange_txn_pct: 0.03503
   gst_pct: 18.0
@@ -56,4 +74,4 @@ charges:
   stamp_duty_buy_pct: 0.003
 
 tick_recorder:
-  enabled: true
+  enabled: true        # har tick database mein save (baad mein replay / testing ke liye)

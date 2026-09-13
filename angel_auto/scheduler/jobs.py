@@ -73,6 +73,7 @@ class SchedulerService:
         on_daily_reset: Callable[[], None] = cancel_stale_pending_request,
         on_eod: Callable[[], None] | None = None,
         eod_time: str = "15:35",
+        daily_reset_time: str = "08:30",
     ) -> None:
         self.tz = ZoneInfo(timezone)
         self.scheduler = BackgroundScheduler(timezone=self.tz)
@@ -80,6 +81,7 @@ class SchedulerService:
         self._square_off_expiry_day = parse_hhmm(square_off_expiry_day_time)
         self._relogin_time = parse_hhmm(daily_relogin_time)
         self._eod_time = parse_hhmm(eod_time)
+        self._reset_time = parse_hhmm(daily_reset_time)
         self.on_square_off = on_square_off
         self.on_daily_relogin = on_daily_relogin
         self.on_daily_reset = on_daily_reset
@@ -105,7 +107,7 @@ class SchedulerService:
         )
         self.scheduler.add_job(
             self.on_daily_reset,
-            CronTrigger(hour=8, minute=30, day_of_week="mon-fri", timezone=self.tz),
+            CronTrigger(hour=self._reset_time.hour, minute=self._reset_time.minute, day_of_week="mon-fri", timezone=self.tz),
             id="daily_reset",
         )
         self.scheduler.add_job(

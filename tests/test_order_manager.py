@@ -177,6 +177,94 @@ def test_execute_exit_triggers_circuit_breaker_on_big_loss():
     assert daily_state["trading_halted"] is True
 
 
+def _market_exit_orders() -> list[tuple[int, OrderSide]]:
+    """(leg_id, side) of every MARKET exit order, in the order they were placed."""
+    from angel_auto.persistence.db import session_scope
+    from angel_auto.persistence.models import Order
+
+    with session_scope() as session:
+        orders = session.query(Order).filter(Order.order_type == "MARKET").order_by(Order.id).all()
+        return [(o.leg_id, o.side) for o in orders]
+
+
+def test_credit_exit_buys_back_short_before_selling_hedge():
+    chain = _chain_with_quotes({"ITM": 300.0, "OTM": 65.0})
+    broker = PaperBroker(chain, starting_capital_rs=100000)
+    oms = OrderManager(broker)
+
+    intent = EntryIntent(
+        direction=Direction.LONG, structure_type=StructureType.CREDIT, expiry="20AUG2026",
+        legs=[_leg("ITM", OrderSide.SELL, "ITM"), _leg("OTM", OrderSide.BUY, "OTM")],
+    )
+    oms.execute_entry(intent)
+    open_position = journal.get_open_position()
+    itm_leg_id = next(leg["id"] for leg in open_position["legs"] if leg["role"] == "ITM")
+    otm_leg_id = next(leg["id"] for leg in open_position["legs"] if leg["role"] == "OTM")
+
+    oms.execute_exit(ExitIntent(reason=ExitReason.MANUAL_EXIT), daily_loss_limit_rs=8000, max_consecutive_losses=5)
+
+    assert _market_exit_orders() == [(itm_leg_id, OrderSide.BUY), (otm_leg_id, OrderSide.SELL)]
+    assert journal.get_open_position() is None
+
+
+def test_debit_exit_buys_back_short_before_selling_long():
+    chain = _chain_with_quotes({"ITM": 300.0, "OTM": 65.0})
+    broker = PaperBroker(chain, starting_capital_rs=100000)
+    oms = OrderManager(broker)
+
+    intent = EntryIntent(
+        direction=Direction.LONG, structure_type=StructureType.DEBIT, expiry="29SEP2026",
+        legs=[_leg("ITM", OrderSide.BUY, "ITM"), _leg("OTM", OrderSide.SELL, "OTM")],
+    )
+    oms.execute_entry(intent)
+    open_position = journal.get_open_position()
+    itm_leg_id = next(leg["id"] for leg in open_position["legs"] if leg["role"] == "ITM")
+    otm_leg_id = next(leg["id"] for leg in open_position["legs"] if leg["role"] == "OTM")
+
+    oms.execute_exit(ExitIntent(reason=ExitReason.MANUAL_EXIT), daily_loss_limit_rs=8000, max_consecutive_losses=5)
+
+    assert _market_exit_orders() == [(otm_leg_id, OrderSide.BUY), (itm_leg_id, OrderSide.SELL)]
+
+
+def test_exit_keeps_hedge_and_position_open_when_short_buyback_fails():
+    chain = _chain_with_quotes({"ITM": 300.0, "OTM": 65.0})
+    broker = PaperBroker(chain, starting_capital_rs=100000)
+    oms = OrderManager(broker)
+
+    intent = EntryIntent(
+        direction=Direction.LONG, structure_type=StructureType.CREDIT, expiry="20AUG2026",
+        legs=[_leg("ITM", OrderSide.SELL, "ITM"), _leg("OTM", OrderSide.BUY, "OTM")],
+    )
+    oms.execute_entry(intent)
+    chain.update_ltp("ITM", 0.0)  # short leg's buy-back gets rejected (no live quote)
+
+    oms.execute_exit(ExitIntent(reason=ExitReason.FIXED_SL), daily_loss_limit_rs=8000, max_consecutive_losses=5)
+
+    open_position = journal.get_open_position()
+    assert open_position is not None
+    assert open_position["status"] == PositionStatus.OPEN
+    otm_leg_id = next(leg["id"] for leg in open_position["legs"] if leg["role"] == "OTM")
+    assert all(leg_id != otm_leg_id for leg_id, _ in _market_exit_orders())  # hedge never sold
+
+
+def test_exit_skips_leg_that_never_filled():
+    chain = _chain_with_quotes({"ITM": 300.0})  # OTM never has a quote -> ITM stands alone
+    broker = PaperBroker(chain, starting_capital_rs=100000)
+    oms = OrderManager(broker, max_otm_retry_attempts=1, retry_delay_sec=0.01)
+
+    intent = EntryIntent(
+        direction=Direction.LONG, structure_type=StructureType.DEBIT, expiry="29SEP2026",
+        legs=[_leg("ITM", OrderSide.BUY, "ITM"), _leg("OTM", OrderSide.SELL, "OTM")],
+    )
+    oms.execute_entry(intent)
+    itm_leg_id = next(leg["id"] for leg in journal.get_open_position()["legs"] if leg["role"] == "ITM")
+
+    oms.execute_exit(ExitIntent(reason=ExitReason.MANUAL_EXIT), daily_loss_limit_rs=8000, max_consecutive_losses=5)
+
+    assert _market_exit_orders() == [(itm_leg_id, OrderSide.SELL)]
+    assert journal.get_open_position() is None
+
+
 def test_execute_exit_noop_when_nothing_open():
     chain = _chain_with_quotes({})
     broker = PaperBroker(chain, starting_capital_rs=100000)

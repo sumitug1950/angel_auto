@@ -1,8 +1,6 @@
-"""REST API for the dashboard - status, trade log, equity curve, and the manual controls
-(Long/Short, cancel-pending, exit-now, kill-switch)."""
+"""REST API for the dashboard - status, chart history, trade log, logs, and the manual
+controls (Buying/Selling, Long/Short, cancel-pending, exit-now, kill-switch)."""
 from __future__ import annotations
-
-from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
 from fastapi.encoders import jsonable_encoder
@@ -11,9 +9,9 @@ from pydantic import BaseModel
 
 from angel_auto.core.enums import Direction, StructureType
 from angel_auto.dashboard.state import get_trading_app
+from angel_auto.dashboard.status import build_chart_history, build_status_payload
 from angel_auto.logging_conf import get_logger
 from angel_auto.persistence import journal
-from angel_auto.scheduler.jobs import is_market_open, parse_hhmm
 
 log = get_logger(__name__)
 router = APIRouter(prefix="/api")
@@ -27,50 +25,16 @@ class StructureRequestBody(BaseModel):
     structure_type: StructureType
 
 
-def _zero_cross_status(app) -> dict:
-    result = {}
-    for name, strategy in app.zero_cross_strategies.items():
-        open_position = journal.get_open_position(strategy_name=name)
-        unrealized_pnl = strategy.position_pnl_rs(open_position) if open_position is not None else 0.0
-        daily_state = journal.get_or_create_daily_state(strategy_name=name)
-        result[name] = {
-            "open_position": open_position,
-            "unrealized_pnl_rs": unrealized_pnl,
-            "daily_state": daily_state,
-            "macd": strategy.tick_macd.macd,
-            "signal": strategy.tick_macd.signal,
-        }
-    return result
-
-
 @router.get("/status")
 def get_status():
-    app = get_trading_app()
-    daily_state = journal.get_or_create_daily_state()
-    open_position = journal.get_open_position() if app.strategy is not None else None
-    pending = journal.get_pending_direction_request()
+    return JSONResponse(content=jsonable_encoder(build_status_payload(get_trading_app())))
 
-    unrealized_pnl = app.strategy.position_pnl_rs(open_position) if (app.strategy is not None and open_position is not None) else 0.0
 
-    market_open = is_market_open(
-        datetime.now(app._scheduler.tz),
-        parse_hhmm(app.settings.app.market_hours.open),
-        parse_hhmm(app.settings.app.market_hours.close),
-    )
-
-    payload = {
-        "mode": app.settings.app.mode.value,
-        "market_open": market_open,
-        "spot": app._router.latest_spot,
-        "vix": app._router.latest_vix,
-        "daily_state": daily_state,
-        "open_position": open_position,
-        "unrealized_pnl_rs": unrealized_pnl,
-        "pending_request": pending,
-        "structure_preference": journal.get_structure_preference(),
-        "zero_cross": _zero_cross_status(app),
-    }
-    return JSONResponse(content=jsonable_encoder(payload))
+@router.get("/chart")
+def get_chart():
+    """Every candle since app start + its MACD, so the chart is complete the moment the page
+    opens; /ws/ticks then streams the live updates."""
+    return JSONResponse(content=build_chart_history(get_trading_app()))
 
 
 @router.get("/trades")
@@ -126,30 +90,12 @@ def post_kill_switch():
     return {"ok": True}
 
 
-@router.post("/zero-cross/{strategy_name}/exit-now")
-def post_zero_cross_exit_now(strategy_name: str):
-    app = get_trading_app()
-    if strategy_name not in app.zero_cross_strategies:
-        raise HTTPException(status_code=404, detail=f"unknown zero-cross strategy '{strategy_name}'")
-    app.manual_exit_for(strategy_name)
-    return {"ok": True}
-
-
-@router.post("/zero-cross/{strategy_name}/kill-switch")
-def post_zero_cross_kill_switch(strategy_name: str):
-    app = get_trading_app()
-    if strategy_name not in app.zero_cross_strategies:
-        raise HTTPException(status_code=404, detail=f"unknown zero-cross strategy '{strategy_name}'")
-    app.kill_switch_for(strategy_name, "dashboard kill-switch")
-    return {"ok": True}
-
-
 @router.get("/logs")
-def get_logs(lines: int = 150):
+def get_logs(lines: int = 300):
     app = get_trading_app()
     log_path = app.settings.app.logging.file
     try:
-        with open(log_path, "r", encoding="utf-8") as f:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
             all_lines = f.readlines()
         return {"lines": all_lines[-lines:]}
     except FileNotFoundError:

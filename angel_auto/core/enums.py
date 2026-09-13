@@ -26,7 +26,7 @@ class Direction(str, Enum):
 class StructureType(str, Enum):
     DEBIT = "DEBIT"
     CREDIT = "CREDIT"
-    SINGLE_LEG = "SINGLE_LEG"  # the two automatic zero-cross strategies (ATM sell / ITM-offset buy)
+    SINGLE_LEG = "SINGLE_LEG"  # legacy - only so old DB rows from the removed automatic strategies still load
 
 
 class OptionType(str, Enum):
@@ -67,8 +67,11 @@ class ExitReason(str, Enum):
     FIXED_SL = "FIXED_SL"
     TRAILING_STOP = "TRAILING_STOP"
     OPPOSITE_MACD = "OPPOSITE_MACD"
-    OPPOSITE_ZERO_CROSS = "OPPOSITE_ZERO_CROSS"  # tick-driven zero-cross strategies' exit
+    OPPOSITE_ZERO_CROSS = "OPPOSITE_ZERO_CROSS"  # legacy - only so old DB rows from the removed automatic strategies still load
     MANUAL_EXIT = "MANUAL_EXIT"
     KILL_SWITCH = "KILL_SWITCH"
+    BROKER_SL = "BROKER_SL"  # the broker-side backup stop-loss triggered
+    RECOVERED = "RECOVERED"  # an exit a crash interrupted, found complete on restart
+    EXTERNAL = "EXTERNAL"  # found already flat at the broker on restart (closed outside the app)
     SQUARE_OFF = "SQUARE_OFF"
     DAILY_LOSS_LIMIT = "DAILY_LOSS_LIMIT"

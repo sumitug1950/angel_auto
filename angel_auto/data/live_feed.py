@@ -5,7 +5,9 @@ inputs - nothing here makes trading decisions, it only keeps market data current
 """
 from __future__ import annotations
 
+import math
 import threading
+import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 
@@ -34,12 +36,17 @@ class LiveFeedRouter:
         self.tick_recorder = tick_recorder
         self._latest_spot: float = 0.0
         self._latest_vix: float = 0.0
+        self._last_spot_tick_at: float | None = None  # time.monotonic() of the latest spot tick
         self._spot_tick_listeners: list[Callable[[float], None]] = []
 
+    def seconds_since_spot_tick(self) -> float:
+        """How stale the feed is - infinite before the first spot tick ever arrives."""
+        return math.inf if self._last_spot_tick_at is None else time.monotonic() - self._last_spot_tick_at
+
     def add_spot_tick_listener(self, listener: Callable[[float], None]) -> None:
-        """Registered by the tick-driven zero-cross strategies (core/app.py) - called with
-        the raw spot LTP on every spot tick, in addition to the candle-based BarAggregator
-        the flagship strategy reads."""
+        """Registered by the dashboard (dashboard/main.py) to feed its live chart - called
+        with the raw spot LTP on every spot tick, in addition to the candle-based
+        BarAggregator the flagship strategy reads."""
         self._spot_tick_listeners.append(listener)
 
     def on_tick(self, tick: dict) -> None:
@@ -53,6 +60,7 @@ class LiveFeedRouter:
 
         if token == self.spot_token:
             self._latest_spot = ltp
+            self._last_spot_tick_at = time.monotonic()
             self.bars.add_tick(ltp, datetime.now(timezone.utc))
             self._record_tick(token, "SPOT", None, ltp)
             for listener in self._spot_tick_listeners:
@@ -110,19 +118,18 @@ def build_subscription_tokens(
 class GreeksRefresher:
     """Periodically recomputes per-strike IV/delta on a background thread - a batch pass
     over every subscribed option, not a per-tick operation, since solving IV for each
-    strike on every single tick would be wasteful."""
+    strike on every single tick would be wasteful. Each quote is solved against its own
+    expiry (weekly and monthly contracts are subscribed side by side)."""
 
     def __init__(
         self,
         option_chain: OptionChainSnapshot,
         get_spot,  # Callable[[], float]
-        get_expiry,  # Callable[[], str] - expiry can change if the strategy rolls DEBIT<->CREDIT
         rate: float,
         interval_sec: float = 5.0,
     ) -> None:
         self.option_chain = option_chain
         self.get_spot = get_spot
-        self.get_expiry = get_expiry
         self.rate = rate
         self.interval_sec = interval_sec
         self._stop_event = threading.Event()
@@ -151,13 +158,4 @@ class GreeksRefresher:
         spot = self.get_spot()
         if spot <= 0:
             return
-        time_to_expiry_years = self._time_to_expiry_years(self.get_expiry())
-        if time_to_expiry_years <= 0:
-            return
-        refresh_option_chain_greeks(self.option_chain, spot, time_to_expiry_years, self.rate)
-
-    @staticmethod
-    def _time_to_expiry_years(expiry: str) -> float:
-        expiry_close = datetime.strptime(expiry, "%d%b%Y").replace(hour=15, minute=30)
-        remaining_sec = (expiry_close - datetime.now()).total_seconds()
-        return max(remaining_sec, 0.0) / (365 * 24 * 3600)
+        refresh_option_chain_greeks(self.option_chain, spot, self.rate)

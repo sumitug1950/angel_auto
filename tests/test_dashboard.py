@@ -3,14 +3,14 @@ TradingApp (no real broker login/WebSocket), so these run fully offline like eve
 test. Live end-to-end verification (real login, real WS, real dashboard process) was done
 manually via scripts/run_dashboard.py - see the conversation this was built from.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import angel_auto.dashboard.state as dashboard_state
-from angel_auto.core.enums import Direction, ExitReason, OrderSide, StructureType
+from angel_auto.core.enums import Direction, OptionType, OrderSide, PositionStatus, StructureType
 from angel_auto.data.instruments import Instrument, InstrumentMaster
 from angel_auto.data.market_data import BarAggregator, OptionChainSnapshot
 from angel_auto.persistence import journal
@@ -21,6 +21,7 @@ LOT_SIZE = 65
 UNDERLYING = "NIFTY"
 STRIKES = [24400.0, 24500.0, 24600.0, 24700.0, 24800.0, 24900.0, 25000.0, 25100.0, 25200.0]
 CE_DELTAS = {24600.0: 0.70, 25100.0: 0.10}
+EXPIRY = (date.today() + timedelta(days=30)).strftime("%d%b%Y").upper()  # relative - monthly expiry lookup filters against date.today()
 
 
 def _fake_instruments(expiry: str) -> InstrumentMaster:
@@ -50,7 +51,7 @@ class _FakeTradingApp:
 
     def __init__(self):
         self.settings = get_settings()
-        self.instruments = _fake_instruments("29SEP2026")
+        self.instruments = _fake_instruments(EXPIRY)
         self.bars = BarAggregator(interval_sec=15)
         base = datetime(2026, 8, 17, 9, 15, tzinfo=timezone.utc)
         for i in range(30):
@@ -59,7 +60,7 @@ class _FakeTradingApp:
         self.option_chain = OptionChainSnapshot()
         for strike, delta in CE_DELTAS.items():
             token = str(int(strike))
-            self.option_chain.register(token, f"NIFTY29SEP2026{int(strike)}CE", strike, "CE", expiry="29SEP2026")
+            self.option_chain.register(token, f"NIFTY{EXPIRY}{int(strike)}CE", strike, "CE", expiry=EXPIRY)
             self.option_chain.update_ltp(token, 100.0)
             self.option_chain.get(token).delta = delta
 
@@ -68,7 +69,6 @@ class _FakeTradingApp:
             max_trades_per_day=self.settings.app.risk.max_trades_per_day, instruments=self.instruments,
             bar_aggregator=self.bars, option_chain=self.option_chain, get_current_vix=lambda: 15.0,
         )
-        self.zero_cross_strategies = {}
 
         class _Router:
             latest_spot = 24790.0
@@ -120,6 +120,45 @@ def test_status_endpoint(client):
     assert data["open_position"] is None
     assert data["daily_state"]["trades_taken"] == 0
     assert data["structure_preference"] == "DEBIT"  # default before any button is pressed
+    assert data["entry_notice"] is None
+    assert data["flagship_enabled"] is True
+    assert data["buttons"]["DEBIT"]["expiry"] == "MONTHLY"
+    assert data["exit_rules"]["sl_amount_rs"] == 4000
+    assert data["risk_limits"]["max_trades_per_day"] == 2
+
+
+def test_status_includes_live_leg_prices_for_open_position(client):
+    position_id = journal.create_position(Direction.LONG, StructureType.DEBIT, EXPIRY)
+    leg_id = journal.add_leg(
+        position_id, "24600", f"NIFTY{EXPIRY}24600CE", OptionType.CE, 24600.0, "ITM", OrderSide.BUY, LOT_SIZE
+    )
+    journal.update_leg_fill(leg_id, entry_price=90.0)
+    journal.update_position_status(position_id, PositionStatus.OPEN, set_entry_time=True)
+
+    leg = client.get("/api/status").json()["open_position"]["legs"][0]
+    assert leg["ltp"] == 100.0  # live quote from the option chain
+    assert leg["pnl_rs"] == pytest.approx(10.0 * LOT_SIZE)
+
+
+def test_chart_endpoint_returns_candles_with_matching_macd(client):
+    data = client.get("/api/chart").json()
+    assert data["interval_sec"] == 15
+    assert len(data["candles"]) == 30
+    assert [c["time"] for c in data["candles"]] == [m["time"] for m in data["macd"]]
+    first_start = int(datetime(2026, 8, 17, 9, 15, tzinfo=timezone.utc).timestamp())
+    assert data["candles"][0] == {"time": first_start, "open": 24700.0, "high": 24700.0, "low": 24700.0, "close": 24700.0}
+
+
+def test_status_shows_entry_notice_while_pending_request_waits_for_quotes(client):
+    trading_app = dashboard_state.app_state["trading_app"]
+    trading_app.strategy.option_chain = OptionChainSnapshot()  # no live quotes
+
+    client.post("/api/direction", json={"direction": "LONG"})  # MACD agrees (bullish bars)
+
+    status = client.get("/api/status").json()
+    assert status["pending_request"]["direction"] == "LONG"
+    assert "Pending" in status["entry_notice"]["message"]
+    assert status["entry_notice"]["at"] is not None
 
 
 def test_structure_endpoint_sets_preference(client):
@@ -185,6 +224,21 @@ def test_equity_curve_endpoint(client):
     data = resp.json()
     assert len(data) == 1
     assert data[0]["total_equity_rs"] == 20800.0
+
+
+def test_tick_publisher_sends_live_candle_and_flagship_macd():
+    from angel_auto.dashboard.main import _make_tick_publisher
+    from angel_auto.dashboard.state import tick_broadcaster
+
+    last_seq = tick_broadcaster.latest_seq()
+    publish = _make_tick_publisher(_FakeTradingApp())
+    publish(24800.0)
+
+    messages, _ = tick_broadcaster.since(last_seq)
+    assert [m["type"] for m in messages] == ["candle", "macd"]
+    last_candle_start = int(datetime(2026, 8, 17, 9, 22, 15, tzinfo=timezone.utc).timestamp())
+    assert messages[0]["time"] == last_candle_start  # keyed exactly like /api/chart's history
+    assert messages[1]["time"] == last_candle_start
 
 
 def test_status_without_trading_app_raises_500():

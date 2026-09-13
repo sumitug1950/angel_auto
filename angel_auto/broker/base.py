@@ -44,6 +44,19 @@ class OrderResult:
 
 
 @dataclass
+class OrderState:
+    """Where a placed order stands at the broker right now. A live broker acknowledges an
+    order as OPEN and only reports the fill later, so callers poll this until the status is
+    final (FILLED / REJECTED / CANCELLED) - `filled_quantity` can be non-zero on a CANCELLED
+    or still-OPEN order (a partial fill)."""
+
+    status: OrderStatus
+    filled_quantity: int = 0
+    average_price: float | None = None
+    message: str = ""
+
+
+@dataclass
 class MarginLeg:
     exchange: str
     trading_symbol: str
@@ -82,7 +95,19 @@ class BrokerAdapter(ABC):
     def cancel_order(self, broker_order_id: str, variety: str = "NORMAL") -> None: ...
 
     @abstractmethod
-    def get_order_status(self, broker_order_id: str) -> OrderStatus: ...
+    def get_order_state(self, broker_order_id: str) -> OrderState:
+        """Must never report an order the broker may still fill as REJECTED/CANCELLED - when
+        the answer is unknown (API failure, not in the book yet), report OPEN."""
+        ...
+
+    def get_order_status(self, broker_order_id: str) -> OrderStatus:
+        return self.get_order_state(broker_order_id).status
+
+    def find_order_by_tag(self, tag: str) -> tuple[str, OrderState] | None:
+        """(broker order id, state) of the latest order sent with this tag, None if there is
+        none. Raises if the broker can't be asked - "unknown" must not read as "never sent".
+        Brokers that keep no cross-restart record (paper, backtest) have nothing to find."""
+        return None
 
     @abstractmethod
     def get_ltp(self, exchange: str, trading_symbol: str, token: str) -> float: ...

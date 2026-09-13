@@ -37,6 +37,16 @@ DEFAULT_STRATEGY_NAME = "macd_itm_otm_spread"
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
+
+def _as_utc(dt: datetime | None) -> datetime | None:
+    """DB datetime columns come back naive (SQLite has no tz-aware column type), but every
+    write path stores real UTC via _utcnow() - stamp the tzinfo back on before a value goes
+    into an API response dict, so its JSON serialization carries an explicit UTC offset
+    instead of a bare string that browsers misparse as local time."""
+    if dt is None or dt.tzinfo is not None:
+        return dt
+    return dt.replace(tzinfo=timezone.utc)
+
 # --- IV History (India VIX bootstrap + daily rolling window) ---------------
 
 
@@ -205,7 +215,7 @@ def get_pending_direction_request() -> dict | None:
         return {
             "id": request.id,
             "direction": request.direction,
-            "requested_at": request.requested_at,
+            "requested_at": _as_utc(request.requested_at),
             "macd_state_at_request": request.macd_state_at_request,
         }
 
@@ -310,6 +320,58 @@ def update_order_status(
             order.reject_reason = reject_reason
 
 
+def list_safety_net_orders(position_id: int) -> list[dict]:
+    """The broker-side backup SL orders on a position's legs (oms.order_manager), oldest first."""
+    with session_scope() as session:
+        orders = session.scalars(
+            select(Order)
+            .join(Leg, Order.leg_id == Leg.id)
+            .where(Leg.position_id == position_id, Order.is_safety_net.is_(True))
+            .order_by(Order.id)
+        ).all()
+        return [
+            {
+                "id": o.id,
+                "leg_id": o.leg_id,
+                "broker_order_id": o.broker_order_id,
+                "status": o.status,
+                "quantity": o.quantity,
+                "price": o.price,
+                "trigger_price": o.trigger_price,
+                "filled_price": o.filled_price,
+            }
+            for o in orders
+        ]
+
+
+def list_unsettled_orders(position_id: int) -> list[dict]:
+    """Regular (non backup-SL) orders on a position's legs whose final state was never
+    recorded - what a crash in the middle of an order leaves behind."""
+    with session_scope() as session:
+        orders = session.scalars(
+            select(Order)
+            .join(Leg, Order.leg_id == Leg.id)
+            .where(
+                Leg.position_id == position_id,
+                Order.is_safety_net.is_(False),
+                Order.status.in_([OrderStatus.PENDING, OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED]),
+            )
+            .order_by(Order.id)
+        ).all()
+        return [
+            {
+                "id": o.id,
+                "leg_id": o.leg_id,
+                "side": o.side,
+                "order_type": o.order_type,
+                "quantity": o.quantity,
+                "broker_order_id": o.broker_order_id,
+                "status": o.status,
+            }
+            for o in orders
+        ]
+
+
 def update_leg_fill(leg_id: int, entry_price: float | None = None, exit_price: float | None = None) -> None:
     with session_scope() as session:
         leg = session.get(Leg, leg_id)
@@ -363,10 +425,19 @@ def close_position(
 
 def get_open_position(strategy_name: str = DEFAULT_STRATEGY_NAME) -> dict | None:
     """At most one open position at a time per strategy (max_concurrent_positions=1)."""
+    return _find_position(strategy_name, [PositionStatus.OPENING, PositionStatus.OPEN])
+
+
+def get_active_position(strategy_name: str = DEFAULT_STRATEGY_NAME) -> dict | None:
+    """Like get_open_position, but also one a crash left CLOSING mid-exit - for startup recovery."""
+    return _find_position(strategy_name, [PositionStatus.OPENING, PositionStatus.OPEN, PositionStatus.CLOSING])
+
+
+def _find_position(strategy_name: str, statuses: list[PositionStatus]) -> dict | None:
     with session_scope() as session:
         position = session.scalar(
             select(Position).where(
-                Position.status.in_([PositionStatus.OPENING, PositionStatus.OPEN]),
+                Position.status.in_(statuses),
                 Position.strategy_name == strategy_name,
             )
         )
@@ -383,6 +454,7 @@ def get_open_position(strategy_name: str = DEFAULT_STRATEGY_NAME) -> dict | None
                 "side": leg.side,
                 "quantity": leg.quantity,
                 "entry_price": leg.entry_price,
+                "exit_price": leg.exit_price,
             }
             for leg in position.legs
         ]
@@ -393,7 +465,7 @@ def get_open_position(strategy_name: str = DEFAULT_STRATEGY_NAME) -> dict | None
             "structure_type": position.structure_type,
             "status": position.status,
             "expiry": position.expiry,
-            "entry_time": position.entry_time,
+            "entry_time": _as_utc(position.entry_time),
             "peak_profit_rs": position.peak_profit_rs,
             "trail_active": position.trail_active,
             "legs": legs,
@@ -417,8 +489,8 @@ def list_recent_positions(limit: int = 50, strategy_name: str | None = None) -> 
                 "direction": p.direction,
                 "structure_type": p.structure_type,
                 "expiry": p.expiry,
-                "entry_time": p.entry_time,
-                "exit_time": p.exit_time,
+                "entry_time": _as_utc(p.entry_time),
+                "exit_time": _as_utc(p.exit_time),
                 "exit_reason": p.exit_reason,
                 "realized_pnl_rs": p.realized_pnl_rs,
                 "charges_rs": p.charges_rs,
@@ -487,6 +559,19 @@ def bulk_insert_ticks(rows: list[dict]) -> None:
         return
     with session_scope() as session:
         session.bulk_insert_mappings(TickRecord, rows)
+
+
+def get_spot_ticks_since(since: datetime) -> list[tuple[datetime, float]]:
+    """(UTC time, price) of every recorded spot tick at or after `since`, oldest first - what a
+    restart rebuilds the day's candles from."""
+    since_utc = since.astimezone(timezone.utc).replace(tzinfo=None)  # stored as naive UTC
+    with session_scope() as session:
+        rows = session.execute(
+            select(TickRecord.recorded_at, TickRecord.ltp)
+            .where(TickRecord.tick_type == "SPOT", TickRecord.recorded_at >= since_utc)
+            .order_by(TickRecord.recorded_at.asc())
+        ).all()
+        return [(_as_utc(recorded_at), ltp) for recorded_at, ltp in rows]
 
 
 def get_ticks_for_day(trade_date: date) -> list[dict]:

@@ -14,6 +14,16 @@ LOT_SIZE = 65
 UNDERLYING = "NIFTY"
 
 
+def _expiry(days_ahead: int) -> str:
+    return (date.today() + timedelta(days=days_ahead)).strftime("%d%b%Y").upper()
+
+
+# Relative to today, not hardcoded - the strategy's expiry lookups filter against date.today(),
+# so a fixed date silently breaks these tests once it passes.
+NEAREST = _expiry(3)
+MONTHLY = _expiry(30)
+
+
 def _fake_instruments(expiries: list[str], strikes: list[float]) -> InstrumentMaster:
     """A monthly expiry (last of each month) and a nearest/current expiry, both offering
     the same CE/PE strikes on a clean 100-pt grid - enough for strike-selection tests."""
@@ -111,7 +121,7 @@ ALL_DELTAS = {**CE_DELTAS, **PE_DELTAS}
 
 
 def test_direction_request_executes_immediately_when_macd_already_matches():
-    monthly = "29SEP2026"
+    monthly = MONTHLY
     instruments = _fake_instruments([monthly], STRIKES)
     chain = _seed_option_chain(instruments, monthly, STRIKES, ALL_DELTAS)
     bars = _bullish_bars()
@@ -125,7 +135,7 @@ def test_direction_request_executes_immediately_when_macd_already_matches():
 
 
 def test_direction_request_goes_pending_when_macd_disagrees():
-    monthly = "29SEP2026"
+    monthly = MONTHLY
     instruments = _fake_instruments([monthly], STRIKES)
     chain = _seed_option_chain(instruments, monthly, STRIKES, ALL_DELTAS)
     bars = _bearish_bars()  # MACD will be BEARISH
@@ -143,7 +153,7 @@ def test_new_direction_request_replaces_existing_pending():
     # market state is BEARISH throughout - a LONG request always goes Pending here, so a
     # second LONG click (changed your mind about timing, not direction) should replace the
     # first pending request rather than stacking a second one.
-    monthly = "29SEP2026"
+    monthly = MONTHLY
     instruments = _fake_instruments([monthly], STRIKES)
     chain = _seed_option_chain(instruments, monthly, STRIKES, ALL_DELTAS)
     bars = _bearish_bars()
@@ -161,7 +171,7 @@ def test_new_direction_request_replaces_existing_pending():
 
 
 def test_cancel_pending_request():
-    monthly = "29SEP2026"
+    monthly = MONTHLY
     instruments = _fake_instruments([monthly], STRIKES)
     chain = _seed_option_chain(instruments, monthly, STRIKES, ALL_DELTAS)
     bars = _bearish_bars()
@@ -175,7 +185,7 @@ def test_cancel_pending_request():
 
 def test_on_market_data_does_nothing_with_pending_and_no_crossover():
     # flat prices -> no crossover ever happens
-    monthly = "29SEP2026"
+    monthly = MONTHLY
     instruments = _fake_instruments([monthly], STRIKES)
     chain = _seed_option_chain(instruments, monthly, STRIKES, ALL_DELTAS)
     bars = BarAggregator(interval_sec=15)
@@ -191,7 +201,7 @@ def test_on_market_data_does_nothing_with_pending_and_no_crossover():
 
 
 def test_max_trades_per_day_blocks_entry():
-    monthly = "29SEP2026"
+    monthly = MONTHLY
     instruments = _fake_instruments([monthly], STRIKES)
     chain = _seed_option_chain(instruments, monthly, STRIKES, ALL_DELTAS)
     bars = _bullish_bars()
@@ -202,12 +212,13 @@ def test_max_trades_per_day_blocks_entry():
 
     intent = strategy.on_direction_request(Direction.LONG)
     assert intent is None
-    # request should be cancelled outright, not left pending
+    # request should be cancelled outright, not left pending - and say why on the dashboard
     assert journal.get_pending_direction_request() is None
+    assert "daily trade cap" in strategy.entry_notice["message"]
 
 
 def test_trading_halt_blocks_entry():
-    monthly = "29SEP2026"
+    monthly = MONTHLY
     instruments = _fake_instruments([monthly], STRIKES)
     chain = _seed_option_chain(instruments, monthly, STRIKES, ALL_DELTAS)
     bars = _bullish_bars()
@@ -222,7 +233,7 @@ def test_trading_halt_blocks_entry():
 
 
 def test_structure_defaults_to_debit_when_no_preference_ever_set():
-    monthly = "29SEP2026"
+    monthly = MONTHLY
     instruments = _fake_instruments([monthly], STRIKES)
     chain = _seed_option_chain(instruments, monthly, STRIKES, ALL_DELTAS)
     bars = _bullish_bars()
@@ -235,8 +246,8 @@ def test_structure_defaults_to_debit_when_no_preference_ever_set():
 
 
 def test_structure_respects_manual_selling_preference():
-    nearest = "20AUG2026"
-    monthly = "29SEP2026"
+    nearest = NEAREST
+    monthly = MONTHLY
     instruments = _fake_instruments([nearest, monthly], STRIKES)
     chain = _seed_option_chain(instruments, nearest, STRIKES, ALL_DELTAS)
     bars = _bullish_bars()
@@ -252,7 +263,7 @@ def test_structure_respects_manual_selling_preference():
 def test_vix_spike_up_forces_debit_overriding_selling_preference():
     # "Selling" was pressed (would normally give CREDIT), but VIX jumped >=3% since
     # yesterday - that must force DEBIT regardless of the button.
-    monthly = "29SEP2026"
+    monthly = MONTHLY
     instruments = _fake_instruments([monthly], STRIKES)
     chain = _seed_option_chain(instruments, monthly, STRIKES, ALL_DELTAS)
     bars = _bullish_bars()
@@ -268,7 +279,7 @@ def test_vix_spike_up_forces_debit_overriding_selling_preference():
 def test_vix_spike_down_forces_credit_overriding_buying_preference():
     # "Buying" preference (or the default), but VIX dropped >=3% since yesterday - a
     # calming market, so that forces CREDIT regardless of the button.
-    nearest = "20AUG2026"
+    nearest = NEAREST
     instruments = _fake_instruments([nearest], STRIKES)
     chain = _seed_option_chain(instruments, nearest, STRIKES, ALL_DELTAS)
     bars = _bullish_bars()
@@ -281,7 +292,7 @@ def test_vix_spike_down_forces_credit_overriding_buying_preference():
 
 
 def test_vix_change_under_threshold_respects_preference():
-    nearest = "20AUG2026"
+    nearest = NEAREST
     instruments = _fake_instruments([nearest], STRIKES)
     chain = _seed_option_chain(instruments, nearest, STRIKES, ALL_DELTAS)
     bars = _bullish_bars()
@@ -319,7 +330,7 @@ def test_option_type_mapping_credit(direction, structure, expected_type):
 
 
 def test_strike_selection_picks_closest_delta_and_correct_sides_for_debit():
-    monthly = "29SEP2026"
+    monthly = MONTHLY
     instruments = _fake_instruments([monthly], STRIKES)
     chain = _seed_option_chain(instruments, monthly, STRIKES, ALL_DELTAS)
     bars = _bullish_bars()
@@ -339,7 +350,7 @@ def test_strike_selection_picks_closest_delta_and_correct_sides_for_debit():
 
 
 def test_strike_selection_sides_flip_for_credit():
-    nearest = "20AUG2026"
+    nearest = NEAREST
     instruments = _fake_instruments([nearest], STRIKES)
     chain = _seed_option_chain(instruments, nearest, STRIKES, ALL_DELTAS)
     bars = _bullish_bars()
@@ -355,17 +366,47 @@ def test_strike_selection_sides_flip_for_credit():
     assert otm.side == OrderSide.BUY
 
 
-def test_strike_selection_returns_none_without_live_quotes():
-    monthly = "29SEP2026"
+def test_missing_live_quotes_keeps_request_pending_and_retries():
+    monthly = MONTHLY
     instruments = _fake_instruments([monthly], STRIKES)
-    chain = OptionChainSnapshot()  # nothing registered/priced
     bars = _bullish_bars()
-    strategy = _make_strategy(_default_config(), instruments, bars, chain)
+    strategy = _make_strategy(_default_config(), instruments, bars, OptionChainSnapshot())  # no quotes yet
 
-    intent = strategy.on_direction_request(Direction.LONG)
+    intent = strategy.on_direction_request(Direction.LONG)  # MACD agrees, but nothing to build legs from
     assert intent is None
-    # request should have been cancelled, not left pending, since MACD did match
+    pending = journal.get_pending_direction_request()
+    assert pending is not None  # NOT cancelled - still waiting
+    assert strategy.entry_notice["request_id"] == pending["id"]
+    assert "Pending" in strategy.entry_notice["message"]
+
+    assert strategy.on_market_data() is None  # still no quotes - keeps waiting
+    assert journal.get_pending_direction_request() is not None
+
+    strategy.option_chain = _seed_option_chain(instruments, monthly, STRIKES, ALL_DELTAS)  # quotes arrive
+    intent = strategy.on_market_data()
+    assert isinstance(intent, EntryIntent)
+    assert intent.direction == Direction.LONG
     assert journal.get_pending_direction_request() is None
+    assert strategy.entry_notice is None
+
+
+def test_pending_request_executes_once_macd_agrees_even_without_crossover_on_last_candle():
+    # The crossover happens mid-rally, several candles before on_market_data runs - a
+    # same-candle crossover check would miss it entirely; the state check must not.
+    monthly = MONTHLY
+    instruments = _fake_instruments([monthly], STRIKES)
+    chain = _seed_option_chain(instruments, monthly, STRIKES, ALL_DELTAS)
+    bars = _bearish_bars()
+    strategy = _make_strategy(_default_config(), instruments, bars, chain)
+    assert strategy.on_direction_request(Direction.LONG) is None  # goes Pending
+
+    base = datetime(2026, 8, 17, 9, 30, tzinfo=timezone.utc)  # right after _bearish_bars' last candle
+    for i in range(40):
+        bars.add_tick(24923 + i * 10, base + timedelta(seconds=i * 15))  # sharp rally
+
+    intent = strategy.on_market_data()
+    assert isinstance(intent, EntryIntent)
+    assert intent.direction == Direction.LONG
 
 
 # --- Exit logic ------------------------------------------------------------
@@ -390,7 +431,7 @@ def _open_test_position(instruments, chain, expiry, direction=Direction.LONG) ->
 
 
 def test_fixed_sl_triggers():
-    monthly = "29SEP2026"
+    monthly = MONTHLY
     instruments = _fake_instruments([monthly], STRIKES)
     chain = _seed_option_chain(instruments, monthly, STRIKES, ALL_DELTAS)
     ids = _open_test_position(instruments, chain, monthly)
@@ -407,7 +448,7 @@ def test_fixed_sl_triggers():
 
 
 def test_trailing_stop_locks_in_profit_above_target():
-    monthly = "29SEP2026"
+    monthly = MONTHLY
     instruments = _fake_instruments([monthly], STRIKES)
     chain = _seed_option_chain(instruments, monthly, STRIKES, ALL_DELTAS)
     ids = _open_test_position(instruments, chain, monthly)
@@ -430,10 +471,23 @@ def test_trailing_stop_locks_in_profit_above_target():
     assert result.reason == ExitReason.TRAILING_STOP
 
 
+def test_exit_rules_wait_for_a_live_quote_on_every_open_leg():
+    monthly = MONTHLY
+    instruments = _fake_instruments([monthly], STRIKES)
+    chain = _seed_option_chain(instruments, monthly, STRIKES, ALL_DELTAS)
+    ids = _open_test_position(instruments, chain, monthly)
+    journal.update_trailing_peak(ids["position_id"], 7000.0, trail_active=True)
+    chain.update_ltp(ids["otm_token"], 0.0)  # e.g. just restarted - no tick for this leg yet
+    strategy = _make_strategy(_default_config(), instruments, _bullish_bars(), chain)
+
+    # With the OTM leg counted as flat, P&L would read ~0 and fire the persisted trailing stop.
+    assert strategy.on_market_data() is None
+
+
 def test_opposite_macd_does_not_exit_by_default():
     # MACD only gates entry timing now - a position stays open through a reversal unless
     # SL/target/manual/square-off says otherwise (exit_on_opposite_macd defaults to False).
-    monthly = "29SEP2026"
+    monthly = MONTHLY
     instruments = _fake_instruments([monthly], STRIKES)
     chain = _seed_option_chain(instruments, monthly, STRIKES, ALL_DELTAS)
     ids = _open_test_position(instruments, chain, monthly, direction=Direction.LONG)
@@ -450,7 +504,7 @@ def test_opposite_macd_does_not_exit_by_default():
 
 
 def test_opposite_macd_exit_fires_when_explicitly_enabled():
-    monthly = "29SEP2026"
+    monthly = MONTHLY
     instruments = _fake_instruments([monthly], STRIKES)
     chain = _seed_option_chain(instruments, monthly, STRIKES, ALL_DELTAS)
     ids = _open_test_position(instruments, chain, monthly, direction=Direction.LONG)
@@ -467,7 +521,7 @@ def test_opposite_macd_exit_fires_when_explicitly_enabled():
 
 
 def test_manual_exit_returns_none_when_nothing_open():
-    instruments = _fake_instruments(["29SEP2026"], STRIKES)
+    instruments = _fake_instruments([MONTHLY], STRIKES)
     chain = OptionChainSnapshot()
     bars = _bullish_bars()
     strategy = _make_strategy(_default_config(), instruments, bars, chain)
@@ -475,7 +529,7 @@ def test_manual_exit_returns_none_when_nothing_open():
 
 
 def test_manual_exit_force_closes_regardless_of_pnl():
-    monthly = "29SEP2026"
+    monthly = MONTHLY
     instruments = _fake_instruments([monthly], STRIKES)
     chain = _seed_option_chain(instruments, monthly, STRIKES, ALL_DELTAS)
     _open_test_position(instruments, chain, monthly)
@@ -488,7 +542,7 @@ def test_manual_exit_force_closes_regardless_of_pnl():
 
 
 def test_square_off_trigger():
-    monthly = "29SEP2026"
+    monthly = MONTHLY
     instruments = _fake_instruments([monthly], STRIKES)
     chain = _seed_option_chain(instruments, monthly, STRIKES, ALL_DELTAS)
     _open_test_position(instruments, chain, monthly)
@@ -498,3 +552,93 @@ def test_square_off_trigger():
     result = strategy.on_square_off_trigger()
     assert isinstance(result, ExitIntent)
     assert result.reason == ExitReason.SQUARE_OFF
+
+
+# --- Config-driven rules (strategies.yaml buying / selling / vix_override / macd) ----------
+
+
+def test_selling_min_days_to_expiry_skips_a_too_close_expiry():
+    later = _expiry(10)
+    instruments = _fake_instruments([NEAREST, later], STRIKES)
+    chain = _seed_option_chain(instruments, later, STRIKES, ALL_DELTAS)
+    config = _default_config()
+    config.selling.min_days_to_expiry = 5  # NEAREST is only 3 days out
+    strategy = _make_strategy(config, instruments, _bullish_bars(), chain, vix=15.0)
+
+    strategy.on_structure_request(StructureType.CREDIT)
+    intent = strategy.on_direction_request(Direction.LONG)
+    assert intent.structure_type == StructureType.CREDIT
+    assert intent.expiry == later
+
+
+def test_buying_can_be_configured_to_trade_weekly():
+    instruments = _fake_instruments([NEAREST, MONTHLY], STRIKES)
+    chain = _seed_option_chain(instruments, NEAREST, STRIKES, ALL_DELTAS)
+    config = _default_config()
+    config.buying.expiry = "WEEKLY"
+    config.buying.min_days_to_expiry = 0
+    strategy = _make_strategy(config, instruments, _bullish_bars(), chain, vix=15.0)
+
+    intent = strategy.on_direction_request(Direction.LONG)  # default button = BUYING
+    assert intent.structure_type == StructureType.DEBIT
+    assert intent.expiry == NEAREST
+
+
+def test_start_with_selling_applies_until_a_button_is_pressed():
+    instruments = _fake_instruments([NEAREST], STRIKES)
+    chain = _seed_option_chain(instruments, NEAREST, STRIKES, ALL_DELTAS)
+    config = _default_config()
+    config.start_with = "SELLING"
+    strategy = _make_strategy(config, instruments, _bullish_bars(), chain, vix=15.0)
+
+    assert strategy.structure_preference() == StructureType.CREDIT
+    intent = strategy.on_direction_request(Direction.LONG)
+    assert intent.structure_type == StructureType.CREDIT
+
+
+def test_vix_override_can_be_switched_off():
+    instruments = _fake_instruments([NEAREST], STRIKES)
+    chain = _seed_option_chain(instruments, NEAREST, STRIKES, ALL_DELTAS)
+    journal.upsert_vix_close(date.today() - timedelta(days=1), 20.0)  # 20 -> 29 is a big spike up
+    config = _default_config()
+    config.vix_override.on_rise = "OFF"
+    strategy = _make_strategy(config, instruments, _bullish_bars(), chain, vix=29.0)
+
+    strategy.on_structure_request(StructureType.CREDIT)
+    intent = strategy.on_direction_request(Direction.LONG)
+    assert intent.structure_type == StructureType.CREDIT  # spike ignored - the button is respected
+
+
+def test_strike_grid_and_delta_targets_come_from_the_button_block():
+    instruments = _fake_instruments([MONTHLY], STRIKES)
+    chain = _seed_option_chain(instruments, MONTHLY, STRIKES, ALL_DELTAS)
+    config = _default_config()
+    config.buying.strike_grid = 200  # only 24400, 24600, 24800, 25000, 25200
+    config.buying.itm_delta = 0.78   # 24500 (exactly 0.78) is off-grid -> 24400 (0.85) is closest
+    config.buying.otm_delta = 0.15
+    strategy = _make_strategy(config, instruments, _bullish_bars(), chain, vix=15.0)
+
+    intent = strategy.on_direction_request(Direction.LONG)
+    assert {leg.role: leg.strike for leg in intent.legs} == {"ITM": 24400.0, "OTM": 25000.0}
+
+
+def test_macd_warmup_keeps_request_pending_until_enough_candles():
+    instruments = _fake_instruments([MONTHLY], STRIKES)
+    chain = _seed_option_chain(instruments, MONTHLY, STRIKES, ALL_DELTAS)
+    bars = _bullish_bars(n=60)
+    config = _default_config()
+    config.macd.min_candles_before_entry = 80
+    strategy = _make_strategy(config, instruments, bars, chain, vix=15.0)
+
+    assert strategy.on_direction_request(Direction.LONG) is None  # MACD agrees, but only 60/80 candles
+    assert journal.get_pending_direction_request() is not None
+    assert "taiyaar" in strategy.entry_notice["message"]
+    assert strategy.on_market_data() is None
+
+    base = datetime(2026, 8, 17, 9, 30, tzinfo=timezone.utc)  # keep the uptrend going past 80 candles
+    for i in range(25):
+        bars.add_tick(24880 + i * 3, base + timedelta(seconds=i * 15))
+
+    intent = strategy.on_market_data()
+    assert isinstance(intent, EntryIntent)
+    assert strategy.entry_notice is None

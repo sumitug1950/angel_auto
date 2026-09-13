@@ -32,6 +32,8 @@ class EntryIntent:
     legs: list[LegIntent] = field(default_factory=list)
     iv_rank: float | None = None
     direction_request_id: int | None = None
+    # Loss (Rs) at which the OMS's broker-side backup stop on a CREDIT short leg triggers; None = no backup SL.
+    backup_sl_loss_rs: float | None = None
 
 
 @dataclass
@@ -45,7 +47,9 @@ class Strategy(ABC):
         """A manual Long/Short click from the dashboard. Returns an EntryIntent immediately
         if current MACD state already agrees with `direction`; otherwise the request is
         persisted as Pending (replacing any existing pending request) and this returns None -
-        the entry fires later from on_market_data() once a matching crossover arrives."""
+        the entry fires later from on_market_data() once MACD agrees. A request that MACD
+        confirmed but that couldn't be built yet (no live quotes) also stays Pending and is
+        retried from on_market_data()."""
         ...
 
     @abstractmethod

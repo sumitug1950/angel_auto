@@ -32,11 +32,11 @@ from angel_auto.oms.order_manager import OrderManager
 from angel_auto.persistence import journal
 from angel_auto.risk import pretrade as pretrade_checks
 from angel_auto.settings import StrategyConfig
+from angel_auto.strategy.base import EntryIntent, ExitIntent
 from angel_auto.strategy.macd_itm_otm_spread import MacdItmOtmSpreadStrategy
 
 log = get_logger(__name__)
 
-STRIKE_BAND_POINTS = 1000.0
 NEAREST_EXPIRY_DAYS_AHEAD = 7
 
 
@@ -153,29 +153,33 @@ class BacktestEngine:
                 if intent is not None:
                     self.oms.execute_entry(intent, trade_date=bar.trade_date)
 
-        exit_intent = self.strategy.on_market_data()
-        if exit_intent is not None and hasattr(exit_intent, "reason"):
-            from angel_auto.strategy.base import ExitIntent
-
-            if isinstance(exit_intent, ExitIntent):
-                self.oms.execute_exit(exit_intent, self.daily_loss_limit_rs, self.max_consecutive_losses, trade_date=bar.trade_date)
+        intent = self.strategy.on_market_data()
+        if isinstance(intent, EntryIntent):  # a Pending request retried now that it can complete
+            self.oms.execute_entry(intent, trade_date=bar.trade_date)
+        elif isinstance(intent, ExitIntent):
+            self.oms.execute_exit(intent, self.daily_loss_limit_rs, self.max_consecutive_losses, trade_date=bar.trade_date)
 
         self._record_equity_point(bar)
 
     def _refresh_synthetic_chain(self, bar: DailyBar) -> None:
-        monthly_expiry = _synthetic_monthly_expiry(bar.trade_date, self.strategy_config.expiry.debit_min_days_gap)
-        nearest_expiry = _synthetic_nearest_expiry(bar.trade_date)
+        # A synthetic monthly per distinct MONTHLY rule's min-days (buying/selling can differ),
+        # plus a synthetic "weekly" at least NEAREST_EXPIRY_DAYS_AHEAD (or a WEEKLY rule's
+        # min-days, if larger) out - enough for either button's config to find its expiry.
+        cfg = self.strategy_config
+        rules = (cfg.buying, cfg.selling)
+        expiries = {_synthetic_monthly_expiry(bar.trade_date, r.min_days_to_expiry) for r in rules if r.expiry == "MONTHLY"}
+        expiries.add(_synthetic_nearest_expiry(bar.trade_date))
+        for r in rules:
+            if r.expiry == "WEEKLY" and r.min_days_to_expiry > NEAREST_EXPIRY_DAYS_AHEAD:
+                expiries.add(_fmt_expiry(bar.trade_date + timedelta(days=r.min_days_to_expiry)))
 
         by_key: dict[tuple[str, str, str], list[Instrument]] = {}
-        for expiry in {monthly_expiry, nearest_expiry}:
-            instruments = self._build_synthetic_strikes(bar, expiry)
-            by_key[(self.underlying, "OPTIDX", expiry)] = instruments
+        for expiry in expiries:
+            by_key[(self.underlying, "OPTIDX", expiry)] = self._build_synthetic_strikes(bar, expiry)
         self.instruments._by_name_type_expiry = by_key
 
-        expiry_date = datetime.strptime(monthly_expiry, "%d%b%Y").date()
-        expiry_date_nearest = datetime.strptime(nearest_expiry, "%d%b%Y").date()
-
-        for expiry, exp_date in [(monthly_expiry, expiry_date), (nearest_expiry, expiry_date_nearest)]:
+        for expiry in expiries:
+            exp_date = datetime.strptime(expiry, "%d%b%Y").date()
             days_remaining = max((exp_date - bar.trade_date).days, 1)
             t = days_remaining / 365.0
             iv = max(bar.vix_close / 100.0, 0.01)
@@ -196,9 +200,10 @@ class BacktestEngine:
         # didn't, and every day's re-registration silently orphaned every open position's
         # exit - fixed after that showed up as exit legs failing / phantom zero P&L in a
         # real backtest run).
-        grid = self.strategy_config.strikes.strike_grid
+        grid = min(self.strategy_config.buying.strike_grid, self.strategy_config.selling.strike_grid)  # finer grid covers both
+        band = self.strategy_config.option_band_points
         center = round(bar.spot_close / grid) * grid
-        strikes = [center + i * grid for i in range(int(-STRIKE_BAND_POINTS // grid), int(STRIKE_BAND_POINTS // grid) + 1)]
+        strikes = [center + i * grid for i in range(int(-band // grid), int(band // grid) + 1)]
         instruments = []
         # Token is derived from (expiry, strike, type) directly - NOT list position/index.
         # The strike list is re-centered around each day's spot, so the same absolute

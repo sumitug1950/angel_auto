@@ -1,7 +1,10 @@
 """Simulated broker for paper trading - the same BrokerAdapter interface the real Angel One
-adapter will implement (Phase 10), but fills happen instantly against the live option-chain
-snapshot's LTP (plus a small slippage model) instead of a real order book. No network calls,
-no real orders - this is what proves the strategy/OMS logic out before touching real money.
+adapter implements, but fills happen against the live option-chain snapshot's LTP (plus a
+small slippage model) instead of a real order book. No network calls, no real orders.
+
+Marketable orders fill instantly. A resting LIMIT order or a STOPLOSS_LIMIT order stays OPEN
+and is re-evaluated against the current LTP every time its state is read, so the OMS's
+fill polling and broker backup SL logic run the same way they do live.
 """
 from __future__ import annotations
 
@@ -13,6 +16,7 @@ from angel_auto.broker.base import (
     MarginLeg,
     OrderRequest,
     OrderResult,
+    OrderState,
     PositionSnapshot,
 )
 from angel_auto.core.enums import OrderSide, OrderStatus
@@ -20,6 +24,8 @@ from angel_auto.data.market_data import OptionChainSnapshot
 from angel_auto.logging_conf import get_logger
 
 log = get_logger(__name__)
+
+NAKED_SHORT_MARGIN_PCT = 0.10  # rough stand-in for SPAN + exposure on an unhedged short
 
 
 class PaperBroker(BrokerAdapter):
@@ -36,32 +42,34 @@ class PaperBroker(BrokerAdapter):
         quote = self.option_chain.get(request.token)
 
         if quote is None or quote.ltp <= 0:
-            self._orders[broker_order_id] = {"status": OrderStatus.REJECTED}
+            self._orders[broker_order_id] = {"status": OrderStatus.REJECTED, "message": "no live quote for token"}
             log.warning("paper_order_rejected_no_quote", token=request.token, symbol=request.trading_symbol)
             return OrderResult(broker_order_id, OrderStatus.REJECTED, message="no live quote for token")
 
-        fill_price = self._simulate_fill_price(quote.ltp, request.side)
+        if request.order_type == "SL":
+            self._orders[broker_order_id] = {"status": OrderStatus.OPEN, "request": request}
+            log.info("paper_stop_loss_resting", broker_order_id=broker_order_id, trigger=request.trigger_price)
+            return OrderResult(broker_order_id, OrderStatus.OPEN)
 
+        fill_price = self._simulate_fill_price(quote.ltp, request.side)
         if request.order_type == "LIMIT" and request.price is not None and not self._limit_is_marketable(
             request.side, request.price, fill_price
         ):
-            self._orders[broker_order_id] = {"status": OrderStatus.OPEN}
+            self._orders[broker_order_id] = {"status": OrderStatus.OPEN, "request": request}
             log.info("paper_order_left_open_limit_not_marketable", broker_order_id=broker_order_id, token=request.token)
             return OrderResult(broker_order_id, OrderStatus.OPEN, message="limit price not marketable yet")
 
-        self._orders[broker_order_id] = {
-            "status": OrderStatus.FILLED,
-            "fill_price": fill_price,
-            "token": request.token,
-            "side": request.side,
-            "quantity": request.quantity,
-        }
+        return self._fill(broker_order_id, request, fill_price)
+
+    def _fill(self, broker_order_id: str, request: OrderRequest, fill_price: float) -> OrderResult:
+        self._orders[broker_order_id] = {"status": OrderStatus.FILLED, "fill_price": fill_price, "request": request}
         self._apply_fill_to_position(request, fill_price)
         log.info(
             "paper_order_filled",
             broker_order_id=broker_order_id,
             token=request.token,
             side=request.side.value,
+            order_type=request.order_type,
             fill_price=fill_price,
             quantity=request.quantity,
         )
@@ -76,32 +84,64 @@ class PaperBroker(BrokerAdapter):
     def _limit_is_marketable(side: OrderSide, limit_price: float, fill_price: float) -> bool:
         return fill_price <= limit_price if side == OrderSide.BUY else fill_price >= limit_price
 
+    def get_order_state(self, broker_order_id: str) -> OrderState:
+        order = self._orders.get(broker_order_id)
+        if order is None:
+            return OrderState(OrderStatus.REJECTED, message="unknown order")
+
+        request = order.get("request")
+        if order["status"] == OrderStatus.OPEN and request is not None:
+            quote = self.option_chain.get(request.token)
+            ltp = quote.ltp if quote is not None else 0.0
+            if ltp > 0:
+                if request.order_type == "SL":
+                    buy = request.side == OrderSide.BUY
+                    if (buy and ltp >= request.trigger_price) or (not buy and ltp <= request.trigger_price):
+                        self._fill(broker_order_id, request, self._simulate_fill_price(ltp, request.side))
+                else:
+                    fill_price = self._simulate_fill_price(ltp, request.side)
+                    if request.price is None or self._limit_is_marketable(request.side, request.price, fill_price):
+                        self._fill(broker_order_id, request, fill_price)
+
+        order = self._orders[broker_order_id]
+        if order["status"] == OrderStatus.FILLED:
+            return OrderState(OrderStatus.FILLED, order["request"].quantity, order["fill_price"])
+        return OrderState(order["status"], message=order.get("message", ""))
+
     def cancel_order(self, broker_order_id: str, variety: str = "NORMAL") -> None:
         order = self._orders.get(broker_order_id)
         if order and order["status"] == OrderStatus.OPEN:
             order["status"] = OrderStatus.CANCELLED
             log.info("paper_order_cancelled", broker_order_id=broker_order_id)
 
-    def get_order_status(self, broker_order_id: str) -> OrderStatus:
-        order = self._orders.get(broker_order_id)
-        return order["status"] if order else OrderStatus.REJECTED
-
     def get_ltp(self, exchange: str, trading_symbol: str, token: str) -> float:
         quote = self.option_chain.get(token)
         return quote.ltp if quote else 0.0
 
     def check_margin(self, legs: list[MarginLeg]) -> MarginCheckResult:
-        """Paper-mode approximation only - good enough to validate strategy/OMS logic.
-        The live broker's real margin API (Phase 10) is the actual gate once real money
-        is involved; this never should be trusted for a live sizing decision."""
-        required = 0.0
-        for leg in legs:
-            quote = self.option_chain.get(leg.token)
-            price = quote.ltp if quote else 0.0
-            if leg.side == OrderSide.BUY:
-                required += price * leg.quantity
-            else:
-                required += price * leg.quantity * 1.5  # rough SPAN-ish placeholder for a short leg
+        """Paper-mode approximation of an F&O basket margin - the live broker's margin API is
+        the real gate. Net premium paid counts in full; a short covered by a long of the same
+        type that is further in-the-money costs nothing more (debit spread); a short whose
+        hedge is further out costs the strike width minus the credit (credit spread); an
+        unhedged short costs NAKED_SHORT_MARGIN_PCT of its notional."""
+        quoted = [(leg, self.option_chain.get(leg.token)) for leg in legs]
+        quoted = [(leg, quote) for leg, quote in quoted if quote is not None]
+        net_premium = sum(quote.ltp * leg.quantity * (1 if leg.side == OrderSide.BUY else -1) for leg, quote in quoted)
+        longs = [quote for leg, quote in quoted if leg.side == OrderSide.BUY]
+
+        risk = 0.0
+        for leg, short in quoted:
+            if leg.side != OrderSide.SELL:
+                continue
+            hedge = next((q for q in longs if q.option_type == short.option_type), None)
+            if hedge is None:
+                risk += short.strike * leg.quantity * NAKED_SHORT_MARGIN_PCT
+                continue
+            hedge_further_out = hedge.strike > short.strike if short.option_type == "CE" else hedge.strike < short.strike
+            if hedge_further_out:
+                risk += abs(hedge.strike - short.strike) * leg.quantity
+
+        required = max(net_premium + risk, 0.0)
         return MarginCheckResult(
             required_margin_rs=required,
             available_margin_rs=self.available_margin_rs,

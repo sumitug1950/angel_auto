@@ -16,6 +16,7 @@ from angel_auto.broker.base import (
     MarginLeg,
     OrderRequest,
     OrderResult,
+    OrderState,
     PositionSnapshot,
 )
 from angel_auto.core.enums import OrderSide, OrderStatus
@@ -30,6 +31,7 @@ class BacktestBroker(BrokerAdapter):
         self.current_spot: float = 0.0
         self.current_vix: float = 0.0
         self._token_meta: dict[str, tuple[float, str, str]] = {}  # token -> (strike, option_type, expiry)
+        self._states: dict[str, OrderState] = {}
 
     def register_token(self, token: str, strike: float, option_type: str, expiry: str) -> None:
         self._token_meta[token] = (strike, option_type, expiry)
@@ -56,16 +58,24 @@ class BacktestBroker(BrokerAdapter):
 
     def place_order(self, request: OrderRequest) -> OrderResult:
         broker_order_id = f"BT{next(self._order_counter):08d}"
+        if request.order_type == "SL":
+            # Daily bars can't say whether a stop would have triggered intraday - it just rests.
+            self._states[broker_order_id] = OrderState(OrderStatus.OPEN)
+            return OrderResult(broker_order_id, OrderStatus.OPEN)
         price = self._theoretical_price(request.token)
         if price is None or price <= 0:
+            self._states[broker_order_id] = OrderState(OrderStatus.REJECTED, message="no theoretical price available")
             return OrderResult(broker_order_id, OrderStatus.REJECTED, message="no theoretical price available")
+        self._states[broker_order_id] = OrderState(OrderStatus.FILLED, request.quantity, round(price, 2))
         return OrderResult(broker_order_id, OrderStatus.FILLED, fill_price=round(price, 2))
 
     def cancel_order(self, broker_order_id: str, variety: str = "NORMAL") -> None:
-        pass  # backtest fills are always immediate - nothing to cancel
+        state = self._states.get(broker_order_id)
+        if state is not None and state.status == OrderStatus.OPEN:
+            self._states[broker_order_id] = OrderState(OrderStatus.CANCELLED)
 
-    def get_order_status(self, broker_order_id: str) -> OrderStatus:
-        return OrderStatus.FILLED
+    def get_order_state(self, broker_order_id: str) -> OrderState:
+        return self._states.get(broker_order_id, OrderState(OrderStatus.REJECTED, message="unknown order"))
 
     def get_ltp(self, exchange: str, trading_symbol: str, token: str) -> float:
         return self._theoretical_price(token) or 0.0

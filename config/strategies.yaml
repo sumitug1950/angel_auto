@@ -1,103 +1,72 @@
-# Per-strategy tunables. Registered strategies are looked up by name in strategy/registry.py.
+# =============================================================================
+# FLAGSHIP STRATEGY SETTINGS   (app ki settings: config/config.yaml)
+#
+# Badalne ke baad:   .venv\Scripts\python.exe scripts\check_config.py   phir app restart.
+#
+# Dashboard ke buttons yaad rakhein:
+#   Buying  = ITM option KHAREEDO + OTM option BECHO (hedge)
+#   Selling = ITM option BECHO    + OTM option KHAREEDO (hedge)
+#   Buying mein:   Long = Call,  Short = Put
+#   Selling mein:  Long = Put,   Short = Call
+#   Dono legs hamesha ek hi expiry aur ek hi type (Call+Call ya Put+Put) ki hoti hain.
+# =============================================================================
 
 active_strategy: macd_itm_otm_spread
-flagship_enabled: false   # the flagship (manual Long/Short spread) stays registered but off by
-                           # default while the two automatic zero-cross strategies are being tested
-
-# The two automatic, tick-driven, single-leg strategies - run concurrently, fully independent
-# trade records (see Position.strategy_name), no manual buttons, no daily trade-count cap.
-zero_cross_strategies:
-  - atm_sell_macd_zero
-  - itm4_buy_macd_zero
+flagship_enabled: true         # false = strategy band (dashboard/chart chalega, trade nahi lagega)
 
 strategies:
-  # --- ATM Sell: always SHORTS the ATM option. Bullish tick-MACD zero-cross signal -> short
-  # ATM PUT; bearish signal -> short ATM CALL. Exit on the opposite signal or a Rs 500 SL.
-  atm_sell_macd_zero:
-    class_path: "angel_auto.strategy.macd_zero_cross_single_leg.MacdZeroCrossSingleLegStrategy"
-    macd:
-      fast_period: 12    # raw TICK counts, not seconds - deliberately chosen for initial testing
-      slow_period: 26
-      signal_period: 9
-    single_leg:
-      side: SELL
-      strike_grid: 50    # real Nifty strike spacing
-      itm_offset_count: 0   # 0 = ATM
-    entry_window:
-      start: "09:15"
-      end: "15:15"
-    zero_cross_exit:
-      sl_amount_rs: 500
-    sizing:
-      lots: 1
-    risk_override:
-      daily_loss_limit_rs: 1500     # ~3 x sl_amount_rs - a pure safety backstop, not a trade-count cap
-      max_consecutive_losses: 3
-      max_trades_per_day: 100000    # effectively unbounded - re-enters on every fresh signal
-
-  # --- ITM4 Buy: always BUYS the option 4 strikes in-the-money. Bullish signal -> buy ITM4
-  # CALL; bearish signal -> buy ITM4 PUT. Same exit rule as ATM Sell.
-  itm4_buy_macd_zero:
-    class_path: "angel_auto.strategy.macd_zero_cross_single_leg.MacdZeroCrossSingleLegStrategy"
-    macd:
-      fast_period: 12
-      slow_period: 26
-      signal_period: 9
-    single_leg:
-      side: BUY
-      strike_grid: 50
-      itm_offset_count: 4
-    entry_window:
-      start: "09:15"
-      end: "15:15"
-    zero_cross_exit:
-      sl_amount_rs: 500
-    sizing:
-      lots: 1
-    risk_override:
-      daily_loss_limit_rs: 1500
-      max_consecutive_losses: 3
-      max_trades_per_day: 100000
-
   macd_itm_otm_spread:
     class_path: "angel_auto.strategy.macd_itm_otm_spread.MacdItmOtmSpreadStrategy"
 
-    candle_interval_sec: 15   # ticks are aggregated into 15-sec OHLC candles for MACD
-
+    # --- MACD (entry ka signal) ------------------------------------------------
+    candle_interval_sec: 15        # Nifty ki itne second ki candle par MACD banta hai
     macd:
       fast_period: 12
       slow_period: 26
       signal_period: 9
+      min_candles_before_entry: 0  # app start ke baad itni candles tak trade nahi lagega. 0 = band.
+                                   # 35 rakho to shuru ke ~9 min (kachcha MACD) mein trade nahi lagega
 
-    pending_request:
-      auto_cancel: false       # stays pending until confirmed, manually cancelled, or market close
+    check_interval_sec: 15         # har itne second SL / target / trailing aur Pending request check hoti hai.
+                                   # kam karoge (jaise 2) to SL jaldi lagega
 
-    structure:
-      default: DEBIT           # DEBIT (buy ITM + sell OTM) unless credit conditions below are met
-      credit_iv_rank_threshold: 50   # switch to CREDIT (short ITM + buy OTM hedge) only above this IV Rank
-      iv_rank_lookback_days: 90
-      iv_source: INDIA_VIX
-      vix_spike_pct_threshold: 3.0   # if VIX has moved >= this % vs yesterday's close, force DEBIT only - CREDIT
-                                      # (naked-ish short) is riskier on a volatility-spike day, overrides IV Rank
+    # --- Buying / Selling button -------------------------------------------------
+    start_with: BUYING             # jab tak koi button nahi dabaya: BUYING ya SELLING
 
-    expiry:
-      # Rule depends on structure (see structure.default/credit_iv_rank_threshold above):
-      #   DEBIT  (ITM buy)  -> monthly expiry, needs time for the long premium to work - min_days_gap applies
-      #   CREDIT (ITM sell) -> nearest/current expiry, benefits from fast theta decay
-      debit_expiry_type: MONTHLY
-      debit_min_days_gap: 10    # if the nearest monthly is closer than this, roll to the next monthly
-      credit_expiry_type: NEAREST
+    buying:                        # "Buying" button ki settings
+      expiry: MONTHLY              # MONTHLY ya WEEKLY
+      min_days_to_expiry: 10       # expiry mein kam se kam itne din baaki hon, warna agli expiry
+      strike_grid: 100             # sirf itne point ke gap wale strikes (100 ya 50)
+      itm_delta: 0.7               # KHAREEDNE wali (ITM) strike ka delta
+      otm_delta: 0.1               # BECHNE wali (OTM, hedge) strike ka delta
 
-    strikes:
-      itm_delta_target: 0.7
-      otm_delta_target: 0.1
-      strike_grid: 100   # only strikes on this spacing are considered (monthly contracts also list a denser 50-pt grid near ATM - skip it)
+    selling:                       # "Selling" button ki settings
+      expiry: WEEKLY               # WEEKLY = current expiry | MONTHLY
+      min_days_to_expiry: 0        # 0 = expiry wale din bhi wahi expiry. 1 = expiry wale din agli expiry
+      strike_grid: 100             # 100 ya 50 (50 se delta 0.1 ke aur paas milta hai)
+      itm_delta: 0.7               # BECHNE wali (ITM) strike ka delta
+      otm_delta: 0.1               # KHAREEDNE wali (OTM, hedge) strike ka delta
 
+    option_band_points: 2500       # Nifty se itne point upar-neeche tak ke options ke live price liye jaate hain.
+                                   # otm_delta wali strike isse bahar hui to wo chuni nahi ja sakti
+
+    vix_override:                  # India VIX kal ke close se zyada badla to button ki jagah ye lagega
+      threshold_pct: 3.0           # kitne % badlaav par
+      on_rise: BUYING              # VIX itna BADHA to:  BUYING | SELLING | OFF (kuch force nahi)
+      on_fall: SELLING             # VIX itna GHATA to:  BUYING | SELLING | OFF
+    iv_rank_lookback_days: 90      # IV Rank sirf record ke liye - kitne din ka VIX itihaas
+
+    # --- Size ------------------------------------------------------------------------
     sizing:
-      lots: 1                  # fixed - no scaling formula
+      lots: 1                      # har trade mein kitne lot (1 lot = lot_size qty, config.yaml mein)
 
+    # --- Exit ------------------------------------------------------------------------
     exit:
-      sl_amount_rs: 4000
-      risk_reward_ratio: 1.2   # target_amount_rs = sl_amount_rs * risk_reward_ratio = 4800
-      trail_gap_rs: 1000       # trailing stop = peak_profit - trail_gap_rs, once target is first reached
-      exit_on_opposite_macd: false   # off - only fixed SL / trailing target / manual exit / square-off close a position
+      sl_amount_rs: 4000           # dono legs ka total loss itna hua to exit
+      risk_reward_ratio: 1.2       # target = sl_amount_rs x ye (4000 x 1.2 = 4800). Target par exit nahi,
+                                   # trailing shuru hota hai
+      trail_gap_rs: 1000           # trailing: sabse zyada profit se itne rupaye gira to exit
+      exit_on_opposite_macd: false # true = MACD ulta hote hi bhi exit
+      broker_backup_sl: true       # Selling trade mein sell leg par Angel One ke paas bhi SL order (app band ho jaye tab bhi bachaav).
+                                   # Buying trade mein nahi lagta - usme buy leg ka SL sell leg ko akela (naked) chhod deta
+      broker_backup_sl_multiple: 1.5  # broker SL tab lage jab sell leg ka loss sl_amount_rs x itna ho (app ka SL pehle lagta hai)

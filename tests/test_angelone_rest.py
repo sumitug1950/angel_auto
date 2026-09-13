@@ -18,6 +18,8 @@ class _FakeSmartConnect:
         self.ltp_response = {"status": True, "data": {"ltp": 300.5}}
         self.margin_response = {"status": True, "data": {"totalMarginRequired": 5000.0}}
         self.rms_response = {"status": True, "data": {"availablecash": 20000.0}}
+        self.details_response = {"status": False}
+        self.last_details_arg = None
         self.position_response = {
             "status": True,
             "data": [
@@ -38,6 +40,10 @@ class _FakeSmartConnect:
 
     def orderBook(self):
         return self.order_book_response
+
+    def individual_order_details(self, unique_order_id):
+        self.last_details_arg = unique_order_id
+        return self.details_response
 
     def ltpData(self, exchange, trading_symbol, token):
         return self.ltp_response
@@ -89,6 +95,7 @@ def test_place_order_maps_sl_order_type_and_trigger_price():
     params = session.smart_connect.last_place_order_params
     assert params["ordertype"] == "STOPLOSS_LIMIT"
     assert params["triggerprice"] == "255.0"
+    assert params["variety"] == "STOPLOSS"  # SmartAPI rejects STOPLOSS_LIMIT under the NORMAL variety
 
 
 def test_place_order_rejected_response_handled():
@@ -133,10 +140,64 @@ def test_get_order_status_maps_complete_to_filled():
     assert broker.get_order_status("ORDER123") == OrderStatus.FILLED
 
 
-def test_get_order_status_unknown_order_id_returns_rejected():
+def test_order_not_in_book_yet_is_still_working_not_rejected():
     session = _fake_session()
     broker = AngelOneBroker(session)
-    assert broker.get_order_status("NOT_FOUND") == OrderStatus.REJECTED
+    assert broker.get_order_status("NOT_FOUND") == OrderStatus.OPEN  # may just not have reached the book yet
+
+
+def test_get_order_state_reports_partial_fill_details():
+    session = _fake_session()
+    session.smart_connect.order_book_response = {"status": True, "data": [
+        {"orderid": "O9", "orderstatus": "open", "status": "open", "filledshares": "30", "averageprice": "301.25", "text": ""},
+    ]}
+    state = AngelOneBroker(session).get_order_state("O9")
+    assert (state.status, state.filled_quantity, state.average_price) == (OrderStatus.PARTIALLY_FILLED, 30, 301.25)
+
+
+def test_get_order_state_rejection_carries_broker_reason():
+    session = _fake_session()
+    session.smart_connect.order_book_response = {"status": True, "data": [
+        {"orderid": "O9", "orderstatus": "rejected", "filledshares": "0", "averageprice": "0", "text": "RMS:Margin Exceeds"},
+    ]}
+    state = AngelOneBroker(session).get_order_state("O9")
+    assert state.status == OrderStatus.REJECTED
+    assert state.message == "RMS:Margin Exceeds"
+
+
+def test_place_order_sends_tag_and_uses_order_details_for_status():
+    session = _fake_session()
+    session.smart_connect.place_order_response = {"status": True, "data": {"orderid": "O7", "uniqueorderid": "U7"}}
+    session.smart_connect.details_response = {"status": True, "data": {
+        "orderid": "O7", "orderstatus": "complete", "filledshares": "65", "averageprice": 301.5, "text": "",
+    }}
+    broker = AngelOneBroker(session)
+    broker.place_order(OrderRequest(
+        exchange="NFO", trading_symbol="X", token="1", side=OrderSide.BUY, quantity=65,
+        order_type="LIMIT", product_type="INTRADAY", price=301.0, tag="AA12",
+    ))
+    assert session.smart_connect.last_place_order_params["ordertag"] == "AA12"
+
+    state = broker.get_order_state("O7")
+    assert (state.status, state.filled_quantity, state.average_price) == (OrderStatus.FILLED, 65, 301.5)
+    assert session.smart_connect.last_details_arg == "U7"
+
+
+def test_find_order_by_tag_scans_the_order_book():
+    session = _fake_session()
+    session.smart_connect.order_book_response = {"status": True, "data": [
+        {"orderid": "O1", "ordertag": "AA5", "orderstatus": "cancelled", "filledshares": "0", "averageprice": 0.0},
+    ]}
+    broker = AngelOneBroker(session, order_book_min_interval_sec=0)
+    order_id, state = broker.find_order_by_tag("AA5")
+    assert (order_id, state.status) == ("O1", OrderStatus.CANCELLED)
+    assert broker.find_order_by_tag("AA6") is None
+
+
+def test_order_book_failure_is_unknown_not_rejected():
+    session = _fake_session()
+    session.smart_connect.order_book_response = {"status": False, "message": "rate limit"}
+    assert AngelOneBroker(session).get_order_state("ORDER123").status == OrderStatus.OPEN
 
 
 def test_get_ltp_parses_response():

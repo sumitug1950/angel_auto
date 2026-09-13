@@ -29,7 +29,7 @@ class Candle:
 class BarAggregator:
     """Buckets tick LTPs into fixed-width candles (candle_interval_sec, e.g. 15s for MACD)."""
 
-    def __init__(self, interval_sec: int, max_candles: int = 1000) -> None:
+    def __init__(self, interval_sec: int, max_candles: int = 2000) -> None:  # 2000 x 15s covers a full 09:15-15:30 day
         self.interval_sec = interval_sec
         self.max_candles = max_candles
         self._candles: list[Candle] = []
@@ -56,6 +56,12 @@ class BarAggregator:
         if not self._candles:
             return pd.Series(dtype=float)
         return pd.Series([c.close for c in self._candles], index=[c.start for c in self._candles])
+
+    def candles(self) -> list[Candle]:
+        return list(self._candles)
+
+    def last_candle(self) -> Candle | None:
+        return self._candles[-1] if self._candles else None
 
     @property
     def candle_count(self) -> int:
@@ -114,26 +120,37 @@ class OptionChainSnapshot:
         return [q for q in self._quotes.values() if q.option_type == option_type and q.expiry == expiry]
 
 
+def time_to_expiry_years(expiry: str, now: datetime | None = None) -> float:
+    """Years from `now` (naive local/IST, defaults to the current time) until `expiry`'s
+    15:30 close - 0.0 once that has passed."""
+    now = now or datetime.now()
+    expiry_close = datetime.strptime(expiry, "%d%b%Y").replace(hour=15, minute=30)
+    return max((expiry_close - now).total_seconds(), 0.0) / (365 * 24 * 3600)
+
+
 def refresh_option_chain_greeks(
     snapshot: OptionChainSnapshot,
     spot: float,
-    time_to_expiry_years: float,
     rate: float,
+    now: datetime | None = None,
 ) -> None:
     """Recompute each quote's own IV (from its live LTP, via iv_solver) and delta (from that
     per-strike IV, via Black-Scholes) - respects the real volatility skew across strikes
-    rather than assuming one flat IV for the whole chain. A quote whose IV can't be solved
-    (stale/bad price, e.g. ltp <= 0) is left with iv=None/delta=None and skipped by strike
-    selection, which falls back to a simpler method (see strategy module).
+    rather than assuming one flat IV for the whole chain. Each quote is solved against its
+    OWN expiry's time to expiry: the chain holds weekly and monthly contracts side by side,
+    and solving a 1-day weekly with a monthly's ~6 weeks badly skews its IV and delta.
+    A quote whose IV can't be solved (no expiry, expired, stale/bad price e.g. ltp <= 0) is
+    left with iv=None/delta=None and skipped by strike selection.
     """
     for quote in snapshot.all_quotes():
-        if quote.ltp <= 0:
+        t = time_to_expiry_years(quote.expiry, now) if quote.expiry else 0.0
+        if quote.ltp <= 0 or t <= 0:
             quote.iv = None
             quote.delta = None
             continue
         try:
-            iv = solve_iv(quote.ltp, spot, quote.strike, time_to_expiry_years, rate, quote.option_type)
-            greeks = bs_greeks(spot, quote.strike, time_to_expiry_years, rate, iv, quote.option_type)
+            iv = solve_iv(quote.ltp, spot, quote.strike, t, rate, quote.option_type)
+            greeks = bs_greeks(spot, quote.strike, t, rate, iv, quote.option_type)
             quote.iv = iv
             quote.delta = greeks.delta
         except IVSolverError:

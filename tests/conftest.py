@@ -4,6 +4,16 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from angel_auto.persistence import db as db_module
+from angel_auto.settings import Mode, get_settings
+
+
+@pytest.fixture(autouse=True)
+def paper_mode(monkeypatch):
+    """Tests never follow the real config/config.yaml `mode:` - the user may have switched it
+    to live, and a test must neither hit the live-trading lock nor assume real orders. Patched
+    on the one cached Settings object every module reads; tests that need another mode build
+    their own Settings copy."""
+    monkeypatch.setattr(get_settings().app, "mode", Mode.PAPER)
 
 
 @pytest.fixture(autouse=True)

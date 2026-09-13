@@ -36,6 +36,10 @@ class TickBroadcaster:
             self._seq += 1
             self._buffer.append((self._seq, message))
 
+    def latest_seq(self) -> int:
+        with self._lock:
+            return self._seq
+
     def since(self, last_seq: int) -> tuple[list[dict], int]:
         with self._lock:
             items = [(seq, msg) for seq, msg in self._buffer if seq > last_seq]

@@ -30,8 +30,13 @@ to version-control.
 
 ## Config at a glance
 
-- `config/config.yaml` - mode (paper/live/backtest), risk limits, square-off times, DB/logging.
-- `config/strategies.yaml` - the active strategy's tunables (MACD periods, delta targets, SL/target/trail amounts, sizing).
+- `config/config.yaml` - mode (paper/live/backtest), risk limits, square-off/scheduler times, order retries, paper slippage, charges, DB/logging.
+- `config/strategies.yaml` - the flagship's tunables: MACD (+ warm-up), per-button `buying:` / `selling:` rules (weekly/monthly expiry, min days to expiry, strike grid, ITM/OTM delta), strike band, VIX override, SL/target/trail, sizing, check interval.
+
+Both files are commented in simple Hinglish. Unknown/misspelled keys and out-of-range values
+are rejected at startup rather than silently defaulted. After any edit run
+`.venv\Scripts\python.exe scripts\check_config.py` - it names the exact bad setting, or prints the
+settings the app will use - then restart the app (settings are read once at startup).
 
 ## Running
 

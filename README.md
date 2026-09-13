@@ -1,7 +1,7 @@
 # angel_auto
 
 Angel One (SmartAPI) par **Nifty options** ka trading system. Aap dashboard par batate ho
-market kis taraf jayega (Long/Short) aur option khareedna hai ya bechna (Buying/Selling).
+market kis taraf jayega (upar/neeche) aur option khareedna hai ya bechna (Buying/Selling).
 App MACD se sahi time dekh kar **2 options ka spread** lagati hai, aur SL / target / trailing /
 square-off par khud nikal jaati hai. Paper (nakli paisa) aur live (asli paisa), dono mode hain.
 
@@ -160,8 +160,14 @@ Kaali window / terminal mein **Ctrl + C**. **Browser band karne se app band nahi
 - Trade ke **entry (tir) aur exit (gola)** nishaan chart par.
 
 ### Trade control (daayein)
-1. **Kadam 1 - Buying / Selling** chuno. Neeche likha aata hai kya hoga aur kaunsi expiry.
-2. **Kadam 2 - Long / Short** dabao. Button par **CALL / PUT** saaf likha hota hai.
+1. **Kadam 1 - Expiry chuno.** Agli 4 expiry ke button dikhte hain (jaise "15 Sep · 2 din · Weekly",
+   "29 Sep · 16 din · Monthly"). Jo chunoge, agla trade **usi expiry** mein lagega - Buying ho ya Selling,
+   dono legs. Chuni expiry restart ke baad bhi yaad rehti hai. Expiry nikal jaye to dobara chunni padegi.
+   **Expiry nahi chuni to CALL/PUT wale button dabenge nahi.**
+2. **Kadam 2 - Buying / Selling** chuno. Neeche likha aata hai kya hoga.
+3. **Kadam 3 - Market upar jayega ya neeche?** Button par seedha likha hota hai kya hoga:
+   Buying chuna hai to **"CALL khareedo"** (market upar) / **"PUT khareedo"** (market neeche),
+   Selling chuna hai to **"PUT becho"** (market upar) / **"CALL becho"** (market neeche).
 3. MACD sahi na ho to **peela "Pending"** dikhega - intezaar karo ya **Cancel**.
 4. **Laal message** aaye to padho - usme wajah likhi hoti hai (margin kam, market band, price nahi mile...).
 5. **Exit now** - khuli position turant band. **Kill switch** - position band + aaj ke liye naye trade band.
@@ -182,18 +188,23 @@ Trades (x / 2), realized P&L, lagatar loss, aur "Trading chalu / band".
 ## 5. Strategy kaise kaam karti hai
 
 ### 5.1 Chaar tarah ke trade
-| Aap dabate ho | Option | ITM leg (main) | OTM leg (hedge) | Expiry (default) |
-|---|---|---|---|---|
-| **Buying + Long** | CALL | **BUY** (delta ~0.7) | SELL (delta ~0.1) | Monthly (kam se kam 10 din baaki) |
-| **Buying + Short** | PUT | **BUY** | SELL | Monthly |
-| **Selling + Long** | PUT | **SELL** | BUY | Weekly (current) |
-| **Selling + Short** | CALL | **SELL** | BUY | Weekly |
+| Aap dabate ho | Option | ITM leg (main) | OTM leg (hedge) |
+|---|---|---|---|
+| **Buying → "CALL khareedo"** (market upar) | CALL | **BUY** (delta ~0.7) | SELL (delta ~0.1) |
+| **Buying → "PUT khareedo"** (market neeche) | PUT | **BUY** | SELL |
+| **Selling → "PUT becho"** (market upar) | PUT | **SELL** | BUY |
+| **Selling → "CALL becho"** (market neeche) | CALL | **SELL** | BUY |
 
-Dono legs hamesha **ek hi expiry aur ek hi type** (Call+Call ya Put+Put) ki hoti hain.
+**Expiry aap khud dashboard par chunte ho** (agli 4 mein se) - koi apne aap ka niyam nahi.
+Dono legs hamesha **aapki chuni ek hi expiry aur ek hi type** (Call+Call ya Put+Put) ki hoti hain.
+
+Yaad rakhein: khareede option ki value har din ghat-ti hai (paas ki expiry mein Buying jaldi nuksaan
+mein jaata hai), aur beche option mein ye aapka fayda hai (paas ki expiry mein sabse tez).
 
 ### 5.2 MACD se entry
 - Nifty ki **15-second candles** par MACD (12/26/9).
-- Long dabaya aur MACD Signal ke **upar** hai - trade turant. Short ke liye **neeche**.
+- "Market upar" wala button (CALL khareedo / PUT becho) dabaya aur MACD Signal ke **upar** hai - trade turant.
+  "Market neeche" wale button (PUT khareedo / CALL becho) ke liye MACD Signal ke **neeche** hona chahiye.
 - MACD khilaaf ho - request **Pending**. Jab MACD aapki taraf aa jaye - trade lagta hai.
 - Price na mile to Pending bani rehti hai aur har 15 sec dobara koshish hoti hai.
 - Pending agli subah 8:30 par apne aap cancel hoti hai. Square-off time ke baad bhi cancel.
@@ -293,11 +304,10 @@ Spelling galat ya galat value hui to app start **nahi** hogi aur check_config ba
 | `macd.min_candles_before_entry` | 0 | Itni candles tak trade nahi. **35** rakho to shuru ke ~9 min kachcha MACD skip |
 | `check_interval_sec` | 15 | SL/target/pending har itne sec check. Kam = SL jaldi |
 | `start_with` | BUYING | Koi button na dabaya ho to |
-| `buying.expiry` / `selling.expiry` | MONTHLY / WEEKLY | Expiry |
-| `buying.min_days_to_expiry` / `selling...` | 10 / 0 | Kam se kam itne din baaki |
+| `expiry_choices` | 4 | Dashboard par agli kitni expiry ke button |
 | `*.strike_grid` | 100 | 100 ya 50 point ke strikes |
 | `*.itm_delta` / `*.otm_delta` | 0.7 / 0.1 | Strike ka delta |
-| `option_band_points` | 2500 | Nifty se itne point tak ke option prices |
+| `option_band_points` | 2500 | Nifty se itne point tak ke option prices. Angel One ~1000 live prices tak deta hai: `expiry_choices × (2 × range ÷ gap + 1) × 2` - zyada hua to check_config mana karega |
 | `vix_override.threshold_pct` | 3.0 | VIX kitna % badle |
 | `vix_override.on_rise` / `on_fall` | BUYING / SELLING | Kya force kare (`OFF` = kuch nahi) |
 | `sizing.lots` | 1 | Har trade kitne lot |
@@ -379,6 +389,8 @@ Kuch bhi khula reh jaye to script bada warning deti hai - **Angel One app se khu
 | `mode: live requires the environment variable...` | Live taala nahi lagaya | `start_live.bat` se chalao |
 | `GALTI config.yaml / strategies.yaml` | Setting galat | Batayi line theek karo |
 | Chart khaali | Market band / app abhi shuru hui | Market time mein data aayega |
+| CALL/PUT button dabte nahi | Expiry nahi chuni / position khuli hai / strategy band | Upar se expiry chuno (button par mouse le jao to wajah dikhti hai) |
+| Laal: "Expiry nahi chuni..." | Chuni expiry nikal gayi ya chuni hi nahi | Kadam 1 se expiry chuno - pending request aage badh jaayegi |
 | **Data ruka** (laal) | Angel One feed toota | App khud jodti hai. Baar-baar ho to internet jaancho |
 | Laal: "Market band hai - order nahi bheja" | 9:15 - 15:30 ke bahar | Sahi hai - market time mein dabao |
 | Laal: "Margin kam hai: chahiye ₹X..." | Account mein paisa kam | Funds daalo ya lot kam |

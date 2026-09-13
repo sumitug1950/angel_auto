@@ -7,7 +7,7 @@ import math
 from datetime import datetime
 
 from angel_auto.analytics.indicators import compute_macd
-from angel_auto.core.enums import OrderSide, StructureType
+from angel_auto.core.enums import OrderSide
 from angel_auto.data.market_data import Candle
 from angel_auto.persistence import journal
 from angel_auto.scheduler.jobs import is_market_open, parse_hhmm
@@ -104,12 +104,6 @@ def build_status_payload(trading_app) -> dict:
             "target_amount_rs": strat_cfg.exit.target_amount_rs,
             "trail_gap_rs": strat_cfg.exit.trail_gap_rs,
         },
-        "buttons": {
-            StructureType.DEBIT.value: {
-                "expiry": strat_cfg.buying.expiry, "min_days_to_expiry": strat_cfg.buying.min_days_to_expiry,
-            },
-            StructureType.CREDIT.value: {
-                "expiry": strat_cfg.selling.expiry, "min_days_to_expiry": strat_cfg.selling.min_days_to_expiry,
-            },
-        },
+        "expiry_choices": strategy.expiry_choices() if strategy is not None else [],
+        "selected_expiry": strategy.selected_expiry() if strategy is not None else None,
     }

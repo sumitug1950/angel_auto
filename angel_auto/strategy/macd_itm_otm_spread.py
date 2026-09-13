@@ -4,9 +4,10 @@ this module wires together every piece built so far:
 
   direction request (manual) -> MACD gate (analytics.indicators) -> structure selection
   (the Buying/Selling button, unless an India VIX move past vix_override.threshold_pct forces
-  one) -> expiry + strikes from that structure's own config block (buying/selling: weekly or
-  monthly, min days to expiry, strike grid, ITM/OTM delta targets - each strike's delta solved
-  from its own live IV, data.market_data) -> fixed-Rs SL / trail-to-lock-in target /
+  one) -> the expiry you picked on the dashboard (one of the next `expiry_choices` expiries,
+  used by both buttons) -> strikes from that structure's config block (buying/selling: strike
+  grid, ITM/OTM delta targets - each strike's delta solved from its own live IV,
+  data.market_data) -> fixed-Rs SL / trail-to-lock-in target /
   opposite-MACD exit / manual exit / mandatory square-off.
 
 Every tunable lives in config/strategies.yaml (see settings.StrategyConfig).
@@ -18,7 +19,7 @@ here) - this module only ever reads the persisted position state, never assumes 
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 
 from angel_auto.analytics.indicators import compute_macd, current_state
 from angel_auto.analytics.iv_rank import compute_iv_rank
@@ -69,6 +70,9 @@ class MacdItmOtmSpreadStrategy(Strategy):
         # Latest entry problem to surface on the dashboard (e.g. MACD confirmed but no live
         # option quotes yet, or the OMS couldn't fill) - None when there's nothing to report.
         self.entry_notice: dict | None = None
+        # Backtest only: nobody clicks an expiry button there, so the engine sets the expiry
+        # here directly instead of overwriting the pick you saved on the dashboard.
+        self.expiry_override: str | None = None
 
     # --- MACD helpers ---------------------------------------------------
 
@@ -113,7 +117,7 @@ class MacdItmOtmSpreadStrategy(Strategy):
         if not self._macd_ready(macd_df):
             self._set_notice(
                 f"MACD abhi taiyaar ho raha hai ({len(macd_df)}/{self._macd_candles_needed()} candles) - "
-                f"{direction.value} request Pending hai, taiyaar hote hi check hogi.",
+                f"{self._request_label(direction, self.structure_preference())} Pending hai, taiyaar hote hi check hogi.",
                 request_id,
                 kind="warmup",
             )
@@ -170,7 +174,8 @@ class MacdItmOtmSpreadStrategy(Strategy):
             self.entry_notice = None
         state = current_state(macd_df)
         if self._direction_matches_state(pending["direction"], state):
-            if not self._notice_is("waiting_quotes", pending["id"]):  # don't re-log every retry
+            retrying = self._notice_is("waiting_quotes", pending["id"]) or self._notice_is("no_expiry", pending["id"])
+            if not retrying:  # don't re-log every retry
                 log.info("pending_request_confirmed_by_macd", direction=pending["direction"].value, macd_state=state)
             return self._try_execute_entry(pending["direction"], pending["id"])
         return None
@@ -183,7 +188,7 @@ class MacdItmOtmSpreadStrategy(Strategy):
             log.warning("entry_blocked_pretrade_check", reason=pretrade.reason)
             journal.resolve_direction_request(direction_request_id, PendingRequestStatus.CANCELLED)
             self._set_notice(
-                f"Trade nahi laga: {pretrade.reason}. {direction.value} request cancel ho gayi.",
+                f"Trade nahi laga: {pretrade.reason}. {self._request_label(direction, self.structure_preference())} cancel ho gayi.",
                 direction_request_id,
                 kind="blocked",
             )
@@ -191,7 +196,18 @@ class MacdItmOtmSpreadStrategy(Strategy):
 
         iv_rank = self._compute_iv_rank()  # recorded for reference only - no longer drives structure selection
         structure_type = self._select_structure()
-        expiry = self.expiry_for(structure_type)
+        expiry = self.selected_expiry()
+        if expiry is None:
+            # Stays Pending: picking an expiry on the dashboard lets the next cycle go ahead.
+            if not self._notice_is("no_expiry", direction_request_id):
+                log.warning("entry_waiting_for_expiry_pick", direction=direction.value)
+            self._set_notice(
+                f"Expiry nahi chuni (ya chuni hui expiry nikal gayi) - upar se expiry chuno. "
+                f"{self._request_label(direction, structure_type)} Pending hai.",
+                direction_request_id,
+                kind="no_expiry",
+            )
+            return None
 
         legs = self._select_legs(direction, structure_type, expiry)
         if legs is None:
@@ -201,8 +217,9 @@ class MacdItmOtmSpreadStrategy(Strategy):
             if not self._notice_is("waiting_quotes", direction_request_id):
                 log.warning("entry_waiting_for_live_quotes", direction=direction.value, structure=structure_type.value, expiry=expiry)
             self._set_notice(
-                f"MACD ne {direction.value} confirm kiya, par {expiry} ke option prices abhi nahi mile - "
-                f"request Pending hai, har {self.config.check_interval_sec:g} sec dobara koshish ho rahi hai.",
+                f"MACD ne confirm kiya, par {expiry} ke option prices abhi nahi mile - "
+                f"{self._request_label(direction, structure_type)} Pending hai, "
+                f"har {self.config.check_interval_sec:g} sec dobara koshish ho rahi hai.",
                 direction_request_id,
                 kind="waiting_quotes",
             )
@@ -283,15 +300,44 @@ class MacdItmOtmSpreadStrategy(Strategy):
     def leg_rules(self, structure_type: StructureType) -> LegRulesConfig:
         return self.config.buying if structure_type == StructureType.DEBIT else self.config.selling
 
-    def expiry_for(self, structure_type: StructureType) -> str:
-        """The expiry `structure_type` would trade today, per its buying/selling config block."""
-        rules = self.leg_rules(structure_type)
+    def expiry_choices(self) -> list[dict]:
+        """The next `expiry_choices` expiries (today's included) offered on the dashboard -
+        [{"expiry", "days_left", "monthly"}], nearest first."""
         today = self.get_today()
-        if rules.expiry == "MONTHLY":
-            return self.instruments.select_monthly_expiry(self.underlying, rules.min_days_to_expiry, as_of=today)
-        return self.instruments.nearest_weekly_expiry(
-            self.underlying, as_of=today + timedelta(days=rules.min_days_to_expiry)
-        )
+        monthly = set(self.instruments.monthly_expiries(self.underlying))
+        choices = []
+        for expiry in self.instruments.available_expiries(self.underlying):
+            expiry_date = datetime.strptime(expiry, "%d%b%Y").date()
+            if expiry_date < today:
+                continue
+            choices.append({"expiry": expiry, "days_left": (expiry_date - today).days, "monthly": expiry in monthly})
+            if len(choices) == self.config.expiry_choices:
+                break
+        return choices
+
+    def selected_expiry(self) -> str | None:
+        """The expiry picked on the dashboard - None if none is picked yet or it's no longer on
+        offer (e.g. it has expired since)."""
+        if self.expiry_override is not None:
+            return self.expiry_override
+        picked = journal.get_expiry_preference()
+        return picked if picked in {choice["expiry"] for choice in self.expiry_choices()} else None
+
+    def on_expiry_request(self, expiry: str) -> bool:
+        """Dashboard expiry button. False (nothing changes) if `expiry` isn't currently on offer."""
+        if expiry not in {choice["expiry"] for choice in self.expiry_choices()}:
+            return False
+        journal.set_expiry_preference(expiry)
+        log.info("expiry_preference_set", expiry=expiry)
+        return True
+
+    @classmethod
+    def _request_label(cls, direction: Direction, structure_type: StructureType) -> str:
+        """Dashboard wording for a request - "CALL khareedne ki request" / "PUT bechne ki
+        request" (the user reads Call/Put, not Long/Short)."""
+        option = "CALL" if cls._option_type_for(direction, structure_type) == OptionType.CE else "PUT"
+        action = "khareedne" if structure_type == StructureType.DEBIT else "bechne"
+        return f"{option} {action} ki request"
 
     @staticmethod
     def _option_type_for(direction: Direction, structure_type: StructureType) -> OptionType:

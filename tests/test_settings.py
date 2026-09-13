@@ -18,9 +18,7 @@ def test_settings_load_and_validate():
     assert active.exit.sl_amount_rs == 4000
     assert active.exit.target_amount_rs == active.exit.sl_amount_rs * active.exit.risk_reward_ratio
     assert active.sizing.lots == 1
-    assert active.buying.expiry == "MONTHLY"
-    assert active.buying.min_days_to_expiry == 10
-    assert active.selling.expiry == "WEEKLY"
+    assert active.expiry_choices == 4
     assert active.buying.strike_grid == 100.0
 
 
@@ -31,12 +29,17 @@ def test_misspelled_setting_is_rejected_not_silently_ignored():
 
 def test_otm_delta_must_be_further_out_than_itm():
     with pytest.raises(ValidationError, match="otm_delta"):
-        StrategyConfig.model_validate({"class_path": "x", "buying": {"expiry": "MONTHLY", "itm_delta": 0.3, "otm_delta": 0.5}})
+        StrategyConfig.model_validate({"class_path": "x", "buying": {"itm_delta": 0.3, "otm_delta": 0.5}})
 
 
 def test_invalid_choice_is_rejected():
-    with pytest.raises(ValidationError, match="expiry"):
-        StrategyConfig.model_validate({"class_path": "x", "selling": {"expiry": "CURRENT"}})
+    with pytest.raises(ValidationError, match="on_rise"):
+        StrategyConfig.model_validate({"class_path": "x", "vix_override": {"on_rise": "MAYBE"}})
+
+
+def test_too_many_live_option_prices_for_one_feed_connection_is_rejected():
+    with pytest.raises(ValidationError, match="expiry_choices"):
+        StrategyConfig.model_validate({"class_path": "x", "expiry_choices": 6, "selling": {"strike_grid": 50}})
 
 
 def test_bad_time_format_is_rejected():

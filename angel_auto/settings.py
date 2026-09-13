@@ -22,6 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_DIR = REPO_ROOT / "config"
 
 HHMM = r"^([01]\d|2[0-3]):[0-5]\d$"  # "09:15"
+MAX_OPTION_TOKENS = 950  # Angel One's ~1000-token WebSocket cap, minus spot/VIX/open legs
 Button = Literal["BUYING", "SELLING"]
 
 
@@ -167,10 +168,9 @@ class MacdConfig(ConfigModel):
 
 
 class LegRulesConfig(ConfigModel):
-    """Expiry + strike rules for one dashboard button (strategies.yaml `buying:` / `selling:`)."""
+    """Strike rules for one dashboard button (strategies.yaml `buying:` / `selling:`). The expiry
+    is not a rule - it's picked on the dashboard (see StrategyConfig.expiry_choices)."""
 
-    expiry: Literal["WEEKLY", "MONTHLY"]
-    min_days_to_expiry: int = Field(0, ge=0)  # skip to the next expiry if fewer days than this remain
     strike_grid: float = Field(100.0, gt=0)
     itm_delta: float = Field(0.7, gt=0, lt=1)
     otm_delta: float = Field(0.1, gt=0, lt=1)
@@ -213,13 +213,27 @@ class StrategyConfig(ConfigModel):
     check_interval_sec: float = Field(15.0, gt=0)  # how often exits + Pending requests are evaluated
     macd: MacdConfig = Field(default_factory=MacdConfig)
     start_with: Button = "BUYING"  # button in effect until one has ever been pressed
-    buying: LegRulesConfig = Field(default_factory=lambda: LegRulesConfig(expiry="MONTHLY", min_days_to_expiry=10))
-    selling: LegRulesConfig = Field(default_factory=lambda: LegRulesConfig(expiry="WEEKLY"))
+    expiry_choices: int = Field(4, ge=1)  # how many upcoming expiries the dashboard offers to pick from
+    buying: LegRulesConfig = Field(default_factory=LegRulesConfig)
+    selling: LegRulesConfig = Field(default_factory=LegRulesConfig)
     option_band_points: float = Field(2500.0, gt=0)  # live quotes subscribed within this many points of spot
     vix_override: VixOverrideConfig = Field(default_factory=VixOverrideConfig)
     iv_rank_lookback_days: int = Field(90, gt=0)  # IV Rank is recorded per trade for reference only
     sizing: SizingConfig = Field(default_factory=SizingConfig)
     exit: ExitConfig = Field(default_factory=ExitConfig)
+
+    @model_validator(mode="after")
+    def _option_quotes_fit_one_feed_connection(self) -> StrategyConfig:
+        """Every offered expiry is subscribed across the whole strike band up front; Angel One
+        caps one WebSocket connection at about 1000 tokens."""
+        grid = min(self.buying.strike_grid, self.selling.strike_grid)
+        tokens = self.expiry_choices * (int(2 * self.option_band_points // grid) + 1) * 2
+        if tokens > MAX_OPTION_TOKENS:
+            raise ValueError(
+                f"expiry_choices / option_band_points / strike_grid add up to ~{tokens} live option prices - "
+                f"Angel One allows about {MAX_OPTION_TOKENS} on one connection; lower one of them"
+            )
+        return self
 
 
 class StrategiesFile(ConfigModel):

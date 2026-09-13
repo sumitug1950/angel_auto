@@ -92,6 +92,7 @@ class TradingApp:
         self._trading_lock = threading.RLock()  # everything that can send an order holds this
         self._subscriptions: list[tuple[int, list[str], int]] = []  # re-sent after a feed reconnect
         self._last_feed_restart = 0.0
+        self._subscribed_expiries: set[str] = set()
 
         self.broker: BrokerAdapter | None = None
         self.strategy: MacdItmOtmSpreadStrategy | None = None
@@ -244,6 +245,16 @@ class TradingApp:
         strategy.on_structure_request; a VIX spike can still override it at that moment)."""
         if self.strategy is not None:
             self.strategy.on_structure_request(structure_type)
+
+    def request_expiry(self, expiry: str) -> bool:
+        """Dashboard expiry button - the expiry every next entry trades, for either button.
+        False if it isn't currently on offer."""
+        if self.strategy is None or not self.strategy.on_expiry_request(expiry):
+            return False
+        if self._ws is not None and expiry not in self._subscribed_expiries:
+            # e.g. a newly listed expiry after the app has run overnight
+            self._subscribe_expiries([expiry], center=self._router.latest_spot or 24000.0)
+        return True
 
     def cancel_pending(self) -> bool:
         if self.strategy is None:
@@ -463,22 +474,41 @@ class TradingApp:
             self.strategy.record_entry_notice(" | ".join(notices))
 
     def _subscribe_option_band(self) -> None:
-        strat_cfg = self.settings.strategies.active
         center = self._router.latest_spot or 24000.0  # fallback if no spot tick arrived yet
         position = journal.get_active_position()
 
-        # Either structure can be chosen at the next entry (Buying/Selling button, or a VIX
-        # override), so both configured expiries need live quotes up front - each on its own
-        # button's strike grid.
-        grid_by_expiry: dict[str, float] = {}
-        if self.strategy is not None:
-            for structure_type in (StructureType.DEBIT, StructureType.CREDIT):
-                expiry = self.strategy.expiry_for(structure_type)
-                grid = self.strategy.leg_rules(structure_type).strike_grid
-                grid_by_expiry[expiry] = min(grid, grid_by_expiry.get(expiry, grid))
+        # Every expiry offered on the dashboard gets live quotes up front, so whichever one is
+        # picked can trade the moment it's picked.
+        expiries = [choice["expiry"] for choice in self.strategy.expiry_choices()] if self.strategy is not None else []
+        tokens = self._band_tokens(expiries, center)
 
+        # An open position's own legs are always watched, wherever spot has moved since.
+        if position is not None:
+            for leg in position["legs"]:
+                self.option_chain.register(
+                    leg["token"], leg["trading_symbol"], leg["strike"], leg["option_type"].value, expiry=position["expiry"]
+                )
+                if leg["token"] not in tokens:
+                    tokens.append(leg["token"])
+        if tokens:
+            self._subscribe(EXCHANGE_NSE_FO, tokens, MODE_QUOTE)
+        log.info("option_band_subscribed", expiries=expiries, center_strike=center, token_count=len(tokens))
+
+    def _subscribe_expiries(self, expiries: list[str], center: float) -> None:
+        tokens = self._band_tokens(expiries, center)
+        if tokens:
+            self._subscribe(EXCHANGE_NSE_FO, tokens, MODE_QUOTE)
+            log.info("option_band_subscribed", expiries=expiries, center_strike=center, token_count=len(tokens))
+
+    def _band_tokens(self, expiries: list[str], center: float) -> list[str]:
+        """Registers + returns the on-grid strike tokens within the band for each expiry not yet
+        subscribed (the finer of the two buttons' grids, so either button's strikes are there)."""
+        strat_cfg = self.settings.strategies.active
+        grid = min(strat_cfg.buying.strike_grid, strat_cfg.selling.strike_grid)
         tokens: list[str] = []
-        for expiry, grid in grid_by_expiry.items():
+        for expiry in expiries:
+            if expiry in self._subscribed_expiries:
+                continue
             tokens.extend(
                 build_subscription_tokens(
                     self.instruments,
@@ -490,14 +520,5 @@ class TradingApp:
                     grid=grid,
                 )
             )
-        # An open position's own legs are always watched, wherever spot has moved since.
-        if position is not None:
-            for leg in position["legs"]:
-                self.option_chain.register(
-                    leg["token"], leg["trading_symbol"], leg["strike"], leg["option_type"].value, expiry=position["expiry"]
-                )
-                if leg["token"] not in tokens:
-                    tokens.append(leg["token"])
-        if tokens:
-            self._subscribe(EXCHANGE_NSE_FO, tokens, MODE_QUOTE)
-        log.info("option_band_subscribed", expiries=grid_by_expiry, center_strike=center, token_count=len(tokens))
+            self._subscribed_expiries.add(expiry)
+        return tokens

@@ -25,6 +25,10 @@ class StructureRequestBody(BaseModel):
     structure_type: StructureType
 
 
+class ExpiryRequestBody(BaseModel):
+    expiry: str
+
+
 @router.get("/status")
 def get_status():
     return JSONResponse(content=jsonable_encoder(build_status_payload(get_trading_app())))
@@ -68,6 +72,14 @@ def post_structure(body: StructureRequestBody):
     app = get_trading_app()
     app.request_structure(body.structure_type)
     return {"structure_preference": body.structure_type.value}
+
+
+@router.post("/expiry")
+def post_expiry(body: ExpiryRequestBody):
+    app = get_trading_app()
+    if not app.request_expiry(body.expiry):
+        raise HTTPException(status_code=400, detail=f"{body.expiry} abhi chunne layak expiry nahi hai")
+    return {"selected_expiry": body.expiry}
 
 
 @router.post("/cancel-pending")

@@ -38,6 +38,7 @@ from angel_auto.strategy.macd_itm_otm_spread import MacdItmOtmSpreadStrategy
 log = get_logger(__name__)
 
 NEAREST_EXPIRY_DAYS_AHEAD = 7
+BACKTEST_MONTHLY_MIN_DAYS = 10
 
 
 def _fmt_expiry(d: date) -> str:
@@ -162,21 +163,16 @@ class BacktestEngine:
         self._record_equity_point(bar)
 
     def _refresh_synthetic_chain(self, bar: DailyBar) -> None:
-        # A synthetic monthly per distinct MONTHLY rule's min-days (buying/selling can differ),
-        # plus a synthetic "weekly" at least NEAREST_EXPIRY_DAYS_AHEAD (or a WEEKLY rule's
-        # min-days, if larger) out - enough for either button's config to find its expiry.
-        cfg = self.strategy_config
-        rules = (cfg.buying, cfg.selling)
-        expiries = {_synthetic_monthly_expiry(bar.trade_date, r.min_days_to_expiry) for r in rules if r.expiry == "MONTHLY"}
-        expiries.add(_synthetic_nearest_expiry(bar.trade_date))
-        for r in rules:
-            if r.expiry == "WEEKLY" and r.min_days_to_expiry > NEAREST_EXPIRY_DAYS_AHEAD:
-                expiries.add(_fmt_expiry(bar.trade_date + timedelta(days=r.min_days_to_expiry)))
+        # Nobody picks an expiry in a backtest: every entry trades a synthetic monthly with at
+        # least BACKTEST_MONTHLY_MIN_DAYS left, with a synthetic nearest expiry listed alongside.
+        monthly = _synthetic_monthly_expiry(bar.trade_date, BACKTEST_MONTHLY_MIN_DAYS)
+        expiries = {monthly, _synthetic_nearest_expiry(bar.trade_date)}
 
         by_key: dict[tuple[str, str, str], list[Instrument]] = {}
         for expiry in expiries:
             by_key[(self.underlying, "OPTIDX", expiry)] = self._build_synthetic_strikes(bar, expiry)
         self.instruments._by_name_type_expiry = by_key
+        self.strategy.expiry_override = monthly  # never the saved dashboard pick
 
         for expiry in expiries:
             exp_date = datetime.strptime(expiry, "%d%b%Y").date()

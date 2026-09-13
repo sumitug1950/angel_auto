@@ -69,6 +69,7 @@ class _FakeTradingApp:
             max_trades_per_day=self.settings.app.risk.max_trades_per_day, instruments=self.instruments,
             bar_aggregator=self.bars, option_chain=self.option_chain, get_current_vix=lambda: 15.0,
         )
+        journal.set_expiry_preference(EXPIRY)
 
         class _Router:
             latest_spot = 24790.0
@@ -83,6 +84,9 @@ class _FakeTradingApp:
 
     def request_structure(self, structure_type):
         self.strategy.on_structure_request(structure_type)
+
+    def request_expiry(self, expiry):
+        return self.strategy.on_expiry_request(expiry)
 
     def cancel_pending(self):
         return self.strategy.cancel_pending_request()
@@ -122,7 +126,8 @@ def test_status_endpoint(client):
     assert data["structure_preference"] == "DEBIT"  # default before any button is pressed
     assert data["entry_notice"] is None
     assert data["flagship_enabled"] is True
-    assert data["buttons"]["DEBIT"]["expiry"] == "MONTHLY"
+    assert data["selected_expiry"] == EXPIRY
+    assert [choice["expiry"] for choice in data["expiry_choices"]] == [EXPIRY]
     assert data["exit_rules"]["sl_amount_rs"] == 4000
     assert data["risk_limits"]["max_trades_per_day"] == 2
 
@@ -168,6 +173,13 @@ def test_structure_endpoint_sets_preference(client):
 
     status = client.get("/api/status").json()
     assert status["structure_preference"] == "CREDIT"
+
+
+def test_expiry_endpoint_accepts_only_offered_expiries(client):
+    assert client.post("/api/expiry", json={"expiry": "01JAN2020"}).status_code == 400
+    resp = client.post("/api/expiry", json={"expiry": EXPIRY})
+    assert resp.status_code == 200
+    assert client.get("/api/status").json()["selected_expiry"] == EXPIRY
 
 
 def test_structure_endpoint_rejects_invalid_value(client):

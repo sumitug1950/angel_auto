@@ -56,6 +56,40 @@ def test_no_orders_outside_market_hours_and_no_entries_on_a_stale_feed():
     assert stale._order_block_reason(is_entry=False) is None  # a MARKET exit still goes out
 
 
+def test_picking_an_expiry_subscribes_its_option_quotes_only_once(monkeypatch):
+    import angel_auto.core.app as app_module
+
+    built = []
+
+    def fake_build(instruments, chain, underlying, expiry, **kwargs):
+        built.append(expiry)
+        return [f"{expiry}-token"]
+
+    monkeypatch.setattr(app_module, "build_subscription_tokens", fake_build)
+
+    class _Strategy:
+        def on_expiry_request(self, expiry):
+            return expiry != "01JAN2020"  # not on offer
+
+    class _Ws:
+        def __init__(self):
+            self.calls = []
+
+        def subscribe(self, exchange_type, tokens, mode):
+            self.calls.append(list(tokens))
+
+    app = _app(1.0)
+    app.strategy = _Strategy()
+    app._ws = _Ws()
+
+    assert app.request_expiry("01JAN2020") is False
+    assert app.request_expiry("22SEP2026") is True
+    assert app.request_expiry("22SEP2026") is True  # picked again - already streaming
+
+    assert built == ["22SEP2026"]
+    assert app._ws.calls == [["22SEP2026-token"]]
+
+
 def test_restart_rebuilds_todays_candles_from_the_tick_archive():
     now = datetime.now(timezone.utc)
     journal.bulk_insert_ticks([

@@ -54,23 +54,27 @@
 
         <div id="frozen-banner" class="banner banner-error" role="alert" hidden></div>
 
-        <p class="step-label">1 · Option khareedna ya bechna?</p>
+        <p class="step-label">1 · Expiry chuno</p>
+        <div class="seg seg-wrap" role="group" aria-label="Expiry" id="expiry-buttons"></div>
+        <p class="hint" id="expiry-hint">--</p>
+
+        <p class="step-label">2 · Option khareedna ya bechna?</p>
         <div class="seg" role="group" aria-label="Buying or Selling">
           <button type="button" id="btn-buying" aria-pressed="false">Buying</button>
           <button type="button" id="btn-selling" aria-pressed="false">Selling</button>
         </div>
         <p class="hint" id="structure-hint">--</p>
 
-        <p class="step-label">2 · Market kis taraf jayega?</p>
+        <p class="step-label">3 · Market kis taraf jayega?</p>
         <div class="direction-row">
           <button type="button" id="btn-long" class="dir-btn dir-long">
             <span class="dir-arrow" aria-hidden="true">▲</span>
-            <span class="dir-main" id="long-label">Long</span>
+            <span class="dir-main" id="long-label">CALL</span>
             <span class="dir-sub">Market upar</span>
           </button>
           <button type="button" id="btn-short" class="dir-btn dir-short">
             <span class="dir-arrow" aria-hidden="true">▼</span>
-            <span class="dir-main" id="short-label">Short</span>
+            <span class="dir-main" id="short-label">PUT</span>
             <span class="dir-sub">Market neeche</span>
           </button>
         </div>
@@ -234,10 +238,52 @@ function optionFor(direction, structure) {
   if (structure === "CREDIT") return direction === "LONG" ? "PUT" : "CALL";
   return direction === "LONG" ? "CALL" : "PUT";
 }
-function expiryText(rules) {
-  if (!rules) return "";
-  const name = rules.expiry === "MONTHLY" ? "Monthly expiry" : "Weekly (current) expiry";
-  return rules.min_days_to_expiry ? `${name}, kam se kam ${rules.min_days_to_expiry} din baaki` : name;
+function tradeName(direction, structure) {  // "CALL khareedo" / "PUT becho" - never Long/Short on screen
+  return `${optionFor(direction, structure)} ${structure === "CREDIT" ? "becho" : "khareedo"}`;
+}
+function tradeDone(direction, structure) {  // past tense, for positions/trades: "CALL khareeda"
+  return `${optionFor(direction, structure)} ${structure === "CREDIT" ? "becha" : "khareeda"}`;
+}
+const MONTH_NAMES = { JAN: "Jan", FEB: "Feb", MAR: "Mar", APR: "Apr", MAY: "May", JUN: "Jun",
+                      JUL: "Jul", AUG: "Aug", SEP: "Sep", OCT: "Oct", NOV: "Nov", DEC: "Dec" };
+function expiryLabel(expiry) {  // "15SEP2026" -> "15 Sep"
+  if (!expiry) return "--";
+  const month = expiry.slice(2, 5);
+  return `${Number(expiry.slice(0, 2))} ${MONTH_NAMES[month] || month}`;
+}
+
+let renderedExpiryKey = "";
+function renderExpiryButtons(choices, selected, enabled) {
+  const key = JSON.stringify([choices, selected, enabled]);
+  if (key === renderedExpiryKey) return;  // rebuild only on change - status arrives every 1.5s
+  renderedExpiryKey = key;
+  const box = el("expiry-buttons");
+  box.replaceChildren();
+  for (const choice of choices) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "expiry-btn";
+    button.setAttribute("aria-pressed", String(choice.expiry === selected));
+    button.disabled = !enabled;
+    const main = document.createElement("span");
+    main.className = "expiry-main";
+    main.textContent = expiryLabel(choice.expiry);
+    const sub = document.createElement("span");
+    sub.className = "expiry-sub";
+    sub.textContent = `${choice.days_left === 0 ? "aaj" : choice.days_left + " din"} · ${choice.monthly ? "Monthly" : "Weekly"}`;
+    button.append(main, sub);
+    button.onclick = async () => {
+      const result = await postAction("/api/expiry", { expiry: choice.expiry });
+      if (result) showMsg(`Expiry ${expiryLabel(choice.expiry)} chuni - agla trade isi mein lagega`, "pos");
+    };
+    box.appendChild(button);
+  }
+  el("expiry-hint").textContent = !choices.length
+    ? "Expiry ki list nahi mili"
+    : selected
+      ? `Agla trade ${expiryLabel(selected)} expiry mein lagega (Buying ho ya Selling, dono legs)`
+      : "Koi expiry nahi chuni - CALL/PUT button se pehle ek chuno";
+  el("expiry-hint").className = "hint" + (selected ? "" : " neg");
 }
 function cell(text, className) {
   const td = document.createElement("td");
@@ -293,13 +339,13 @@ el("btn-buying").onclick = () => postAction("/api/structure", { structure_type: 
 el("btn-selling").onclick = () => postAction("/api/structure", { structure_type: "CREDIT" });
 
 async function requestDirection(direction) {
-  const option = optionFor(direction, lastStatus ? lastStatus.structure_preference : "DEBIT");
-  showMsg(`${direction} (${option}) bheja ja raha hai…`);
+  const name = tradeName(direction, lastStatus ? lastStatus.structure_preference : "DEBIT");
+  showMsg(`${name}: request bheji ja rahi hai…`);
   const result = await postAction("/api/direction", { direction });
   if (result) {
     showMsg(result.executed_immediately
-      ? `${direction} (${option}): MACD sahi hai, order bheja gaya`
-      : `${direction} (${option}): request Pending — upar message dekhein`, "pos");
+      ? `${name}: MACD sahi hai, order bheja gaya`
+      : `${name}: request Pending — upar message dekhein`, "pos");
   }
 }
 el("btn-long").onclick = () => requestDirection("LONG");
@@ -371,14 +417,17 @@ function renderControls(data) {
 
   el("btn-buying").setAttribute("aria-pressed", String(structure === "DEBIT"));
   el("btn-selling").setAttribute("aria-pressed", String(structure === "CREDIT"));
-  const rules = data.buttons ? data.buttons[structure] : null;
+  renderExpiryButtons(data.expiry_choices || [], data.selected_expiry, enabled);
   el("structure-hint").textContent = structure === "CREDIT"
-    ? `ITM option becho + OTM khareedo (hedge) · ${expiryText(rules)}`
-    : `ITM option khareedo + OTM becho (hedge) · ${expiryText(rules)}`;
-  el("long-label").textContent = "Long · " + optionFor("LONG", structure);
-  el("short-label").textContent = "Short · " + optionFor("SHORT", structure);
+    ? "ITM option becho + OTM khareedo (hedge)"
+    : "ITM option khareedo + OTM becho (hedge)";
+  el("long-label").textContent = tradeName("LONG", structure);
+  el("short-label").textContent = tradeName("SHORT", structure);
 
-  const blockReason = !enabled ? "Strategy band hai (config)" : hasPosition ? "Position pehle se khuli hai" : "";
+  const blockReason = !enabled ? "Strategy band hai (config)"
+    : hasPosition ? "Position pehle se khuli hai"
+    : !data.selected_expiry ? "Pehle upar se expiry chuno"
+    : "";
   for (const id of ["btn-long", "btn-short"]) {
     el(id).disabled = !!blockReason;
     el(id).title = blockReason;
@@ -391,7 +440,7 @@ function renderControls(data) {
   const pending = data.pending_request;
   el("pending-box").hidden = !pending;
   if (pending) {
-    el("pending-title").textContent = `Pending: ${pending.direction} · ${optionFor(pending.direction, structure)}`;
+    el("pending-title").textContent = `Pending: ${tradeName(pending.direction, structure)}`;
     el("pending-text").textContent = `${when(pending.requested_at)} se MACD confirm hone ka intezaar`;
   }
 
@@ -411,7 +460,7 @@ function renderPosition(data) {
     setPill("position-pill", "Koi nahi");
     return;
   }
-  setPill("position-pill", `${pos.direction} · ${optionFor(pos.direction, pos.structure_type)}`, "accent");
+  setPill("position-pill", tradeDone(pos.direction, pos.structure_type), "accent");
 
   const pnl = data.unrealized_pnl_rs;
   el("pos-pnl").textContent = rs(pnl);
@@ -508,7 +557,7 @@ async function refreshTrades() {
       body.appendChild(tableRow([
         cell(when(t.entry_time), "nowrap"),
         cell(when(t.exit_time), "nowrap"),
-        cell(`${t.direction} · ${optionFor(t.direction, t.structure_type)} (${BUTTON_NAME[t.structure_type] || t.structure_type})`, "nowrap"),
+        cell(tradeDone(t.direction, t.structure_type), "nowrap"),
         cell(t.expiry, "nowrap"),
         cell(legs, "legs-cell"),
         cell(EXIT_REASON[t.exit_reason] || t.exit_reason || "--", "nowrap"),
@@ -774,7 +823,7 @@ function refreshMarkers() {
     const long = trade.direction === "LONG";
     markers.push(isEntry
       ? { time, position: long ? "belowBar" : "aboveBar", shape: long ? "arrowUp" : "arrowDown", color: C.macd,
-          text: `${long ? "Long" : "Short"} ${optionFor(trade.direction, trade.structure_type)}` }
+          text: tradeDone(trade.direction, trade.structure_type) }
       : { time, position: long ? "aboveBar" : "belowBar", shape: "circle", color: C.text2,
           text: "Exit · " + (EXIT_REASON[trade.exit_reason] || trade.exit_reason || "") });
   };

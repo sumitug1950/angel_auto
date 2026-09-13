@@ -20,13 +20,20 @@ from angel_auto.broker.angelone_auth import login, logout
 from angel_auto.data.instruments import InstrumentMaster
 from angel_auto.logging_conf import configure_logging
 from angel_auto.persistence.db import init_db
-from angel_auto.settings import get_settings
+from angel_auto.settings import REPO_ROOT, get_settings
+
+BACKTEST_DB = REPO_ROOT / "data_store" / "backtest.db"
 
 
 def main() -> int:
     configure_logging()
-    init_db()
     settings = get_settings()
+    # The engine records positions, VIX closes and equity through the same journal the live
+    # app uses - a fresh throwaway DB per run keeps it away from real trades, today's risk
+    # counters and your dashboard picks (and keeps old runs out of this report).
+    BACKTEST_DB.unlink(missing_ok=True)
+    settings.app.database.url = f"sqlite:///{BACKTEST_DB.as_posix()}"
+    init_db()
 
     if len(sys.argv) >= 3:
         from_date = datetime.strptime(sys.argv[1], "%Y-%m-%d").date()

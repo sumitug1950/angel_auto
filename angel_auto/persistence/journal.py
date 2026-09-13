@@ -23,6 +23,7 @@ from angel_auto.persistence.models import (
     DailyRiskState,
     DirectionRequest,
     EquityCurve,
+    ExpiryPreference,
     IVHistory,
     Leg,
     Order,
@@ -103,6 +104,24 @@ def get_structure_preference(default: StructureType = StructureType.DEBIT) -> St
     with session_scope() as session:
         pref = session.scalar(select(StrategyPreference).limit(1))
         return pref.structure_type if pref else default
+
+
+# --- Expiry pick (dashboard expiry buttons, applied at next entry) ---------------------
+
+
+def set_expiry_preference(expiry: str) -> None:
+    with session_scope() as session:
+        pref = session.scalar(select(ExpiryPreference).limit(1))
+        if pref is None:
+            session.add(ExpiryPreference(expiry=expiry))
+        else:
+            pref.expiry = expiry
+
+
+def get_expiry_preference() -> str | None:
+    with session_scope() as session:
+        pref = session.scalar(select(ExpiryPreference).limit(1))
+        return pref.expiry if pref else None
 
 
 # --- Daily risk state (max_trades_per_day, daily_loss_limit_rs, kill state) ----

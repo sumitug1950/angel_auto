@@ -89,7 +89,12 @@ def _bearish_bars(interval_sec: int = 15, n: int = 60) -> BarAggregator:
     return bars
 
 
-def _make_strategy(config, instruments, bars, chain, vix=20.0, max_trades_per_day=2):
+def _make_strategy(config, instruments, bars, chain, vix=20.0, max_trades_per_day=2, expiry="first"):
+    """`expiry` is the dashboard pick: "first" = the fake master's first listed expiry, None = none picked."""
+    if expiry == "first":
+        expiry = instruments.available_expiries(UNDERLYING)[0]
+    if expiry is not None:
+        journal.set_expiry_preference(expiry)
     return MacdItmOtmSpreadStrategy(
         config=config,
         underlying=UNDERLYING,
@@ -557,31 +562,54 @@ def test_square_off_trigger():
 # --- Config-driven rules (strategies.yaml buying / selling / vix_override / macd) ----------
 
 
-def test_selling_min_days_to_expiry_skips_a_too_close_expiry():
-    later = _expiry(10)
-    instruments = _fake_instruments([NEAREST, later], STRIKES)
-    chain = _seed_option_chain(instruments, later, STRIKES, ALL_DELTAS)
-    config = _default_config()
-    config.selling.min_days_to_expiry = 5  # NEAREST is only 3 days out
-    strategy = _make_strategy(config, instruments, _bullish_bars(), chain, vix=15.0)
+def test_either_button_trades_the_expiry_picked_on_the_dashboard():
+    instruments = _fake_instruments([NEAREST, MONTHLY], STRIKES)
+    chain = _seed_option_chain(instruments, MONTHLY, STRIKES, ALL_DELTAS)
+    strategy = _make_strategy(_default_config(), instruments, _bullish_bars(), chain, vix=15.0, expiry=MONTHLY)
 
-    strategy.on_structure_request(StructureType.CREDIT)
+    strategy.on_structure_request(StructureType.CREDIT)  # Selling - no longer tied to the nearest expiry
     intent = strategy.on_direction_request(Direction.LONG)
     assert intent.structure_type == StructureType.CREDIT
-    assert intent.expiry == later
+    assert intent.expiry == MONTHLY
 
 
-def test_buying_can_be_configured_to_trade_weekly():
+def test_no_expiry_picked_keeps_the_request_pending_until_one_is():
     instruments = _fake_instruments([NEAREST, MONTHLY], STRIKES)
     chain = _seed_option_chain(instruments, NEAREST, STRIKES, ALL_DELTAS)
-    config = _default_config()
-    config.buying.expiry = "WEEKLY"
-    config.buying.min_days_to_expiry = 0
-    strategy = _make_strategy(config, instruments, _bullish_bars(), chain, vix=15.0)
+    strategy = _make_strategy(_default_config(), instruments, _bullish_bars(), chain, vix=15.0, expiry=None)
 
-    intent = strategy.on_direction_request(Direction.LONG)  # default button = BUYING
-    assert intent.structure_type == StructureType.DEBIT
+    assert strategy.on_direction_request(Direction.LONG) is None
+    assert journal.get_pending_direction_request() is not None
+    assert "expiry" in strategy.entry_notice["message"].lower()
+
+    assert strategy.on_expiry_request(NEAREST) is True
+    intent = strategy.on_market_data()
+    assert isinstance(intent, EntryIntent)
     assert intent.expiry == NEAREST
+
+
+def test_expiry_choices_are_the_next_few_upcoming_expiries():
+    past, later, far = _expiry(-1), _expiry(10), _expiry(45)
+    instruments = _fake_instruments([past, NEAREST, MONTHLY, later, far], STRIKES)
+    config = _default_config()
+    config.expiry_choices = 3
+    strategy = _make_strategy(config, instruments, _bullish_bars(), OptionChainSnapshot(), expiry=None)
+
+    assert [choice["expiry"] for choice in strategy.expiry_choices()] == [NEAREST, later, MONTHLY]
+    assert strategy.on_expiry_request(past) is False  # expired - not on offer
+    assert strategy.on_expiry_request(far) is False  # beyond the offered few
+    assert strategy.selected_expiry() is None
+
+
+def test_backtest_expiry_override_trades_without_touching_the_saved_pick():
+    instruments = _fake_instruments([NEAREST, MONTHLY], STRIKES)
+    chain = _seed_option_chain(instruments, MONTHLY, STRIKES, ALL_DELTAS)
+    strategy = _make_strategy(_default_config(), instruments, _bullish_bars(), chain, vix=15.0, expiry=None)
+    strategy.expiry_override = MONTHLY
+
+    intent = strategy.on_direction_request(Direction.LONG)
+    assert intent.expiry == MONTHLY
+    assert journal.get_expiry_preference() is None
 
 
 def test_start_with_selling_applies_until_a_button_is_pressed():

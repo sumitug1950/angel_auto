@@ -59,6 +59,17 @@ class StrategyPreference(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 
 
+class ExpiryPreference(Base):
+    """Singleton row: the expiry you picked on the dashboard - every entry trades it, whichever
+    of Buying/Selling is in effect. Remembered across restarts."""
+
+    __tablename__ = "expiry_preference"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    expiry: Mapped[str] = mapped_column(String(20))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
 class DailyRiskState(Base):
     """One row per (trading day, strategy) - the running counters risk/circuit_breaker.py
     and risk/pretrade.py check before allowing any new entry. Scoped by strategy_name so

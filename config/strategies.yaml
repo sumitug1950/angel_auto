@@ -33,22 +33,23 @@ strategies:
     # --- Buying / Selling button -------------------------------------------------
     start_with: BUYING             # jab tak koi button nahi dabaya: BUYING ya SELLING
 
+    expiry_choices: 4              # dashboard par agli kitni expiry ke button dikhein. Expiry aap wahin se chunte ho -
+                                   # Buying ho ya Selling, agla trade usi expiry mein lagega (dono legs)
+
     buying:                        # "Buying" button ki settings
-      expiry: MONTHLY              # MONTHLY ya WEEKLY
-      min_days_to_expiry: 10       # expiry mein kam se kam itne din baaki hon, warna agli expiry
       strike_grid: 100             # sirf itne point ke gap wale strikes (100 ya 50)
       itm_delta: 0.7               # KHAREEDNE wali (ITM) strike ka delta
       otm_delta: 0.1               # BECHNE wali (OTM, hedge) strike ka delta
 
     selling:                       # "Selling" button ki settings
-      expiry: WEEKLY               # WEEKLY = current expiry | MONTHLY
-      min_days_to_expiry: 0        # 0 = expiry wale din bhi wahi expiry. 1 = expiry wale din agli expiry
       strike_grid: 100             # 100 ya 50 (50 se delta 0.1 ke aur paas milta hai)
       itm_delta: 0.7               # BECHNE wali (ITM) strike ka delta
       otm_delta: 0.1               # KHAREEDNE wali (OTM, hedge) strike ka delta
 
     option_band_points: 2500       # Nifty se itne point upar-neeche tak ke options ke live price liye jaate hain.
-                                   # otm_delta wali strike isse bahar hui to wo chuni nahi ja sakti
+                                   # otm_delta wali strike isse bahar hui to wo chuni nahi ja sakti.
+                                   # Angel One ~1000 live prices tak hi deta hai: expiry_choices x (2 x range / gap + 1) x 2
+                                   # isse zyada hua to check_config mana kar dega
 
     vix_override:                  # India VIX kal ke close se zyada badla to button ki jagah ye lagega
       threshold_pct: 3.0           # kitne % badlaav par

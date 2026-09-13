@@ -134,6 +134,12 @@ button { font: inherit; color: inherit; }
 .seg button:hover:not(:disabled) { background: var(--hover); color: var(--text); }
 .seg button[aria-pressed="true"], .seg button.active { background: var(--accent); color: #fff; }
 .seg-small button { padding: 4px 10px; font-size: 0.8rem; flex: none; }
+.seg-wrap { flex-wrap: wrap; }
+.seg-wrap .expiry-btn {
+  flex: 1 1 calc(50% - 3px); display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 6px 8px; line-height: 1.2;
+}
+.expiry-main { font-weight: 700; }
+.expiry-sub { font-size: 0.72rem; font-weight: 500; opacity: 0.85; }
 
 .step-label { margin: 14px 0 6px; color: var(--muted); font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
 .step-label:first-of-type { margin-top: 0; }

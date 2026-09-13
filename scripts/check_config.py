@@ -50,9 +50,9 @@ def main() -> int:
     print("Config sahi hai. App ye settings use karega:\n")
     print(f"  mode: {app.mode.value}   |   {app.underlying}, lot size {app.lot_size}, har trade {s.sizing.lots} lot")
     print(f"  flagship strategy: {'CHALU' if strategies.flagship_enabled else 'BAND'}")
+    print(f"  expiry: dashboard par agli {s.expiry_choices} expiry mein se aap chunte ho (Buying/Selling dono ke liye)")
     for label, rules in (("Buying ", s.buying), ("Selling", s.selling)):
-        print(f"  {label}: {rules.expiry} expiry (kam se kam {rules.min_days_to_expiry} din baaki), "
-              f"strike gap {rules.strike_grid:g}, ITM delta {rules.itm_delta}, OTM delta {rules.otm_delta}")
+        print(f"  {label}: strike gap {rules.strike_grid:g}, ITM delta {rules.itm_delta}, OTM delta {rules.otm_delta}")
     print(f"  shuru mein button: {s.start_with}")
     print(f"  VIX {s.vix_override.threshold_pct}% badhe -> {s.vix_override.on_rise}, "
           f"{s.vix_override.threshold_pct}% ghate -> {s.vix_override.on_fall}")

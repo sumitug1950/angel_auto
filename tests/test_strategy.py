@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-from angel_auto.core.enums import Direction, ExitReason, OptionType, OrderSide, StructureType
+from angel_auto.core.enums import Direction, ExitReason, LevelOrderStatus, OptionType, OrderSide, StructureType
 from angel_auto.data.instruments import Instrument, InstrumentMaster
 from angel_auto.data.market_data import BarAggregator, OptionChainSnapshot
 from angel_auto.persistence import journal
@@ -610,6 +610,150 @@ def test_backtest_expiry_override_trades_without_touching_the_saved_pick():
     intent = strategy.on_direction_request(Direction.LONG)
     assert intent.expiry == MONTHLY
     assert journal.get_expiry_preference() is None
+
+
+# --- Nifty level orders + Nifty SL/target ---------------------------------------------
+
+
+def _level_strategy(bars=None, with_quotes=True):
+    instruments = _fake_instruments([MONTHLY], STRIKES)
+    chain = _seed_option_chain(instruments, MONTHLY, STRIKES, ALL_DELTAS) if with_quotes else OptionChainSnapshot()
+    strategy = _make_strategy(_default_config(), instruments, bars or _bearish_bars(), chain, vix=15.0, expiry=MONTHLY)
+    return strategy, instruments, chain
+
+
+def test_level_order_enters_as_soon_as_nifty_reaches_the_level_without_waiting_for_macd():
+    strategy, _, _ = _level_strategy(bars=_bearish_bars())  # MACD disagrees with a market-upar trade
+    order_id = strategy.place_level_order(
+        Direction.LONG, StructureType.DEBIT, 24850.0, spot=24800.0, spot_sl=24790.0, spot_target=24950.0
+    )
+
+    assert strategy.on_spot_price(24849.0) is None
+    intent = strategy.on_spot_price(24851.0)
+
+    assert isinstance(intent, EntryIntent)
+    assert (intent.direction, intent.structure_type, intent.expiry) == (Direction.LONG, StructureType.DEBIT, MONTHLY)
+    assert {leg.option_type for leg in intent.legs} == {OptionType.CE}
+    assert (intent.spot_sl, intent.spot_target, intent.level_order_id) == (24790.0, 24950.0, order_id)
+    assert journal.get_active_level_order()["status"] == LevelOrderStatus.TRIGGERED
+
+
+def test_level_below_nifty_triggers_on_the_way_down():
+    strategy, _, _ = _level_strategy(bars=_bullish_bars())
+    strategy.place_level_order(Direction.SHORT, StructureType.CREDIT, 24700.0, spot=24800.0)
+
+    assert strategy.on_spot_price(24760.0) is None
+    intent = strategy.on_spot_price(24699.0)
+
+    itm = next(leg for leg in intent.legs if leg.role == "ITM")
+    assert (intent.structure_type, itm.option_type, itm.side) == (StructureType.CREDIT, OptionType.CE, OrderSide.SELL)  # CALL becho
+
+
+def test_level_order_rejects_levels_on_the_wrong_side_or_too_close():
+    strategy, _, _ = _level_strategy()
+    with pytest.raises(ValueError, match="SL"):
+        strategy.place_level_order(Direction.LONG, StructureType.DEBIT, 24850.0, spot=24800.0, spot_sl=24900.0)
+    with pytest.raises(ValueError, match="target"):
+        strategy.place_level_order(Direction.LONG, StructureType.DEBIT, 24850.0, spot=24800.0, spot_target=24800.0)
+    with pytest.raises(ValueError, match="SL"):
+        strategy.place_level_order(Direction.SHORT, StructureType.DEBIT, 24700.0, spot=24800.0, spot_sl=24650.0)
+    with pytest.raises(ValueError, match="paas"):
+        strategy.place_level_order(Direction.LONG, StructureType.DEBIT, 24801.0, spot=24800.0)
+    assert journal.get_active_level_order() is None
+
+
+def test_level_order_needs_an_expiry_pick():
+    instruments = _fake_instruments([MONTHLY], STRIKES)
+    strategy = _make_strategy(_default_config(), instruments, _bullish_bars(), OptionChainSnapshot(), expiry=None)
+    with pytest.raises(ValueError, match="expiry"):
+        strategy.place_level_order(Direction.LONG, StructureType.DEBIT, 24850.0, spot=24800.0)
+
+
+def test_new_level_order_replaces_the_active_one_and_cancel_removes_it():
+    strategy, _, _ = _level_strategy()
+    first = strategy.place_level_order(Direction.LONG, StructureType.DEBIT, 24850.0, spot=24800.0)
+    second = strategy.place_level_order(Direction.SHORT, StructureType.DEBIT, 24700.0, spot=24800.0)
+
+    assert journal.get_level_order(first)["status"] == LevelOrderStatus.CANCELLED
+    assert journal.get_active_level_order()["id"] == second
+    assert strategy.cancel_level_order() is True
+    assert journal.get_active_level_order() is None
+
+
+def test_waiting_level_order_can_be_moved_but_not_once_the_level_is_hit():
+    strategy, _, _ = _level_strategy()
+    order_id = strategy.place_level_order(Direction.LONG, StructureType.DEBIT, 24850.0, spot=24800.0, spot_sl=24820.0)
+
+    strategy.modify_level_order(24760.0, spot=24800.0, spot_sl=24740.0, spot_target=24790.0)  # dragged below Nifty
+    order = journal.get_level_order(order_id)
+    assert (order["trigger_price"], order["trigger_when"], order["spot_sl"], order["spot_target"]) == (
+        24760.0, "FALLS_TO", 24740.0, 24790.0,
+    )
+    assert (order["direction"], order["structure_type"], order["expiry"]) == (Direction.LONG, StructureType.DEBIT, MONTHLY)
+
+    with pytest.raises(ValueError, match="SL"):
+        strategy.modify_level_order(24760.0, spot=24800.0, spot_sl=24770.0)
+
+    assert isinstance(strategy.on_spot_price(24759.0), EntryIntent)  # level hit
+    with pytest.raises(ValueError, match="chhu chuka"):
+        strategy.modify_level_order(24700.0, spot=24759.0)
+
+
+def test_level_order_is_valid_only_for_the_day_it_was_placed():
+    strategy, _, _ = _level_strategy()
+    order_id = strategy.place_level_order(Direction.LONG, StructureType.DEBIT, 24850.0, spot=24800.0)
+    strategy.get_today = lambda: date.today() + timedelta(days=1)
+
+    assert strategy.on_spot_price(24900.0) is None
+    assert journal.get_level_order(order_id)["status"] == LevelOrderStatus.EXPIRED
+
+
+def test_level_hit_while_a_position_is_open_cancels_the_level_order():
+    strategy, instruments, chain = _level_strategy()
+    order_id = strategy.place_level_order(Direction.LONG, StructureType.DEBIT, 24850.0, spot=24800.0)
+    _open_test_position(instruments, chain, MONTHLY)
+
+    assert strategy.on_spot_price(24860.0) is None
+    assert journal.get_level_order(order_id)["status"] == LevelOrderStatus.CANCELLED
+
+
+def test_level_entry_waits_for_option_prices_then_gives_up():
+    strategy, _, _ = _level_strategy(with_quotes=False)
+    order_id = strategy.place_level_order(Direction.LONG, StructureType.DEBIT, 24850.0, spot=24800.0)
+
+    assert strategy.on_spot_price(24851.0) is None
+    assert journal.get_level_order(order_id)["status"] == LevelOrderStatus.TRIGGERED
+    assert "intezaar" in strategy.entry_notice["message"]
+
+    later = datetime.now(timezone.utc) + timedelta(seconds=strategy.config.level_order.entry_retry_sec + 1)
+    strategy.get_now = lambda: later
+    assert strategy.on_spot_price(24851.0) is None
+    assert journal.get_level_order(order_id)["status"] == LevelOrderStatus.FAILED
+
+
+def test_nifty_sl_and_target_close_a_market_upar_position():
+    strategy, instruments, chain = _level_strategy()
+    _open_test_position(instruments, chain, MONTHLY, direction=Direction.LONG)
+    strategy.set_position_spot_levels(spot=24800.0, spot_sl=24750.0, spot_target=24900.0)
+
+    assert strategy.on_spot_price(24760.0) is None
+    assert strategy.on_spot_price(24750.0).reason == ExitReason.SPOT_SL
+    assert strategy.on_spot_price(24905.0).reason == ExitReason.SPOT_TARGET
+
+
+def test_nifty_sl_sits_above_a_market_neeche_position_and_can_be_removed():
+    strategy, instruments, chain = _level_strategy()
+    _open_test_position(instruments, chain, MONTHLY, direction=Direction.SHORT)
+    with pytest.raises(ValueError, match="upar"):
+        strategy.set_position_spot_levels(spot=24800.0, spot_sl=24750.0, spot_target=None)
+    strategy.set_position_spot_levels(spot=24800.0, spot_sl=24850.0, spot_target=24700.0)
+
+    assert strategy.on_spot_price(24849.0) is None
+    assert strategy.on_spot_price(24851.0).reason == ExitReason.SPOT_SL
+    assert strategy.on_spot_price(24690.0).reason == ExitReason.SPOT_TARGET
+
+    strategy.set_position_spot_levels(spot=24800.0, spot_sl=None, spot_target=None)
+    assert strategy.on_spot_price(24990.0) is None
 
 
 def test_start_with_selling_applies_until_a_button_is_pressed():

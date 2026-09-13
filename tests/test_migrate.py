@@ -68,7 +68,7 @@ def test_migration_adds_missing_columns_and_backfills_existing_rows(monkeypatch)
 
     with engine.begin() as conn:
         cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(positions)").fetchall()}
-        assert {"strategy_name", "charges_rs", "net_pnl_rs"} <= cols
+        assert {"strategy_name", "charges_rs", "net_pnl_rs", "spot_sl", "spot_target"} <= cols
         row = conn.execute(text("SELECT strategy_name FROM positions WHERE id = 1")).fetchone()
         assert row[0] == "macd_itm_otm_spread"
 

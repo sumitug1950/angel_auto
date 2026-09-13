@@ -34,6 +34,10 @@ class EntryIntent:
     direction_request_id: int | None = None
     # Loss (Rs) at which the OMS's broker-side backup stop on a CREDIT short leg triggers; None = no backup SL.
     backup_sl_loss_rs: float | None = None
+    # Nifty spot-price SL/target saved on the position (a level order's); None = not set.
+    spot_sl: float | None = None
+    spot_target: float | None = None
+    level_order_id: int | None = None  # the dashboard level order this entry comes from, if any
 
 
 @dataclass

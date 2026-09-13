@@ -19,6 +19,8 @@ def test_settings_load_and_validate():
     assert active.exit.target_amount_rs == active.exit.sl_amount_rs * active.exit.risk_reward_ratio
     assert active.sizing.lots == 1
     assert active.expiry_choices == 4
+    assert active.level_order.enabled is True
+    assert active.level_order.check_interval_sec == 1.0
     assert active.buying.strike_grid == 100.0
 
 

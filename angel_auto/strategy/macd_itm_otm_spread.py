@@ -23,6 +23,7 @@ from datetime import date, datetime, timezone
 
 from angel_auto.analytics.indicators import compute_macd, current_state
 from angel_auto.analytics.iv_rank import compute_iv_rank
+from angel_auto.core.enums import LevelOrderStatus
 from angel_auto.core.enums import (
     Direction,
     ExitReason,
@@ -57,6 +58,7 @@ class MacdItmOtmSpreadStrategy(Strategy):
         option_chain: OptionChainSnapshot,
         get_current_vix,  # Callable[[], float]
         get_today=date.today,  # Callable[[], date] - injectable so backtest can drive its own clock
+        get_now=None,  # Callable[[], datetime] (UTC) - injectable for tests; level-order retry timing
     ) -> None:
         self.config = config
         self.underlying = underlying
@@ -67,6 +69,7 @@ class MacdItmOtmSpreadStrategy(Strategy):
         self.option_chain = option_chain
         self.get_current_vix = get_current_vix
         self.get_today = get_today
+        self.get_now = get_now or (lambda: datetime.now(timezone.utc))
         # Latest entry problem to surface on the dashboard (e.g. MACD confirmed but no live
         # option quotes yet, or the OMS couldn't fill) - None when there's nothing to report.
         self.entry_notice: dict | None = None
@@ -242,12 +245,12 @@ class MacdItmOtmSpreadStrategy(Strategy):
             legs=legs,
             iv_rank=iv_rank,
             direction_request_id=direction_request_id,
-            backup_sl_loss_rs=(
-                self.config.exit.sl_amount_rs * self.config.exit.broker_backup_sl_multiple
-                if self.config.exit.broker_backup_sl
-                else None
-            ),
+            backup_sl_loss_rs=self._backup_sl_loss_rs(),
         )
+
+    def _backup_sl_loss_rs(self) -> float | None:
+        exit_cfg = self.config.exit
+        return exit_cfg.sl_amount_rs * exit_cfg.broker_backup_sl_multiple if exit_cfg.broker_backup_sl else None
 
     def _compute_iv_rank(self) -> float | None:
         try:
@@ -468,3 +471,248 @@ class MacdItmOtmSpreadStrategy(Strategy):
             return None
         log.info("exit_square_off")
         return ExitIntent(reason=ExitReason.SQUARE_OFF)
+
+    # --- Nifty level orders + Nifty-price SL/target -------------------------------------
+    #
+    # A level order (set on the dashboard chart) enters its saved trade the moment Nifty spot
+    # reaches the level - no MACD gate - and carries an optional Nifty-price SL/target onto
+    # the position. Those sit on top of the Rs SL/target/trailing: whichever is hit first
+    # exits. The app calls on_spot_price every level_order.check_interval_sec.
+
+    @classmethod
+    def _trade_name(cls, direction: Direction, structure_type: StructureType) -> str:
+        """"CALL khareedo" / "PUT becho" - the dashboard's wording for a trade."""
+        option = "CALL" if cls._option_type_for(direction, structure_type) == OptionType.CE else "PUT"
+        return f"{option} {'khareedo' if structure_type == StructureType.DEBIT else 'becho'}"
+
+    def place_level_order(
+        self,
+        direction: Direction,
+        structure_type: StructureType,
+        trigger_price: float,
+        spot: float,
+        spot_sl: float | None = None,
+        spot_target: float | None = None,
+    ) -> int:
+        """Dashboard level order on the picked expiry - replaces any active one. Raises
+        ValueError carrying the dashboard message when it can't be placed as given."""
+        cfg = self.config.level_order
+        if not cfg.enabled:
+            raise ValueError("Level order band hai (strategies.yaml mein level_order.enabled: false)")
+        if structure_type not in (StructureType.DEBIT, StructureType.CREDIT):
+            raise ValueError("Buying ya Selling chuno")
+        expiry = self.selected_expiry()
+        if expiry is None:
+            raise ValueError("Pehle Trade control mein expiry chuno")
+        if journal.get_open_position() is not None:
+            raise ValueError("Position pehle se khuli hai - level order uske band hone ke baad lagao")
+        pretrade = pretrade_checks.run_pretrade_checks(self.max_trades_per_day, trade_date=self.get_today())
+        if not pretrade.allowed:
+            raise ValueError(f"Aaj naya trade nahi lag sakta: {pretrade.reason}")
+        trigger_when = self._validated_trigger_when(direction, trigger_price, spot, spot_sl, spot_target)
+
+        order_id = journal.create_level_order(
+            self.get_today(), direction, structure_type, expiry, trigger_price, trigger_when, spot_sl, spot_target
+        )
+        log.info(
+            "level_order_placed",
+            level_order_id=order_id,
+            trade=self._trade_name(direction, structure_type),
+            expiry=expiry,
+            level=trigger_price,
+            trigger_when=trigger_when,
+            spot=spot,
+            spot_sl=spot_sl,
+            spot_target=spot_target,
+        )
+        return order_id
+
+    def modify_level_order(
+        self, trigger_price: float, spot: float, spot_sl: float | None = None, spot_target: float | None = None
+    ) -> None:
+        """Moves the waiting level order's level / Nifty SL / target (lines dragged on the chart)
+        - same trade, same expiry. Raises ValueError carrying the dashboard message."""
+        order = journal.get_active_level_order()
+        if order is None:
+            raise ValueError("Koi level order nahi hai")
+        if order["status"] != LevelOrderStatus.WAITING:
+            raise ValueError("Level chhu chuka hai - order ja raha hai, ab badal nahi sakte")
+        trigger_when = self._validated_trigger_when(order["direction"], trigger_price, spot, spot_sl, spot_target)
+        if not journal.update_level_order(order["id"], trigger_price, trigger_when, spot_sl, spot_target):
+            raise ValueError("Level chhu chuka hai - order ja raha hai, ab badal nahi sakte")
+        log.info(
+            "level_order_modified",
+            level_order_id=order["id"],
+            level=trigger_price,
+            trigger_when=trigger_when,
+            spot=spot,
+            spot_sl=spot_sl,
+            spot_target=spot_target,
+        )
+
+    def _validated_trigger_when(
+        self, direction: Direction, trigger_price: float, spot: float, spot_sl: float | None, spot_target: float | None
+    ) -> str:
+        """Checks a level (and its Nifty SL/target) against live spot; returns which way spot
+        must move to reach it."""
+        gap = self.config.level_order.min_gap_points
+        if spot <= 0:
+            raise ValueError("Nifty ka live bhaav abhi nahi aaya - thodi der baad lagao")
+        if abs(trigger_price - spot) < max(gap, 0.05):
+            raise ValueError(
+                f"Level Nifty ke abhi ke bhaav ({spot:,.2f}) ke bahut paas hai - kam se kam {gap:g} "
+                "point door rakho, ya seedha Trade control ka CALL/PUT button dabao"
+            )
+        self._validate_spot_levels(direction, trigger_price, "level", spot_sl, spot_target)
+        return "RISES_TO" if trigger_price > spot else "FALLS_TO"
+
+    def cancel_level_order(self) -> bool:
+        order = journal.get_active_level_order()
+        if order is None:
+            return False
+        journal.resolve_level_order(order["id"], LevelOrderStatus.CANCELLED, note="Aapne cancel kiya")
+        log.info("level_order_cancelled", level_order_id=order["id"])
+        return True
+
+    def set_position_spot_levels(self, spot: float, spot_sl: float | None, spot_target: float | None) -> None:
+        """Nifty-price SL/target on the open position - any position, a MACD trade too. None
+        removes that level. Raises ValueError carrying the dashboard message."""
+        position = journal.get_open_position()
+        if position is None:
+            raise ValueError("Koi khuli position nahi hai")
+        if spot_sl is not None or spot_target is not None:
+            if spot <= 0:
+                raise ValueError("Nifty ka live bhaav abhi nahi aaya - thodi der baad lagao")
+            self._validate_spot_levels(position["direction"], spot, "Nifty ke abhi ke bhaav", spot_sl, spot_target)
+        journal.set_position_spot_levels(position["id"], spot_sl, spot_target)
+        log.info("position_spot_levels_set", position_id=position["id"], spot=spot, spot_sl=spot_sl, spot_target=spot_target)
+
+    def _validate_spot_levels(
+        self, direction: Direction, reference: float, reference_name: str, spot_sl: float | None, spot_target: float | None
+    ) -> None:
+        """A market-upar trade (LONG) stops out below `reference` and books profit above it;
+        a market-neeche trade (SHORT) the other way round - each at least min_gap_points away."""
+        gap = max(self.config.level_order.min_gap_points, 0.05)
+        bullish = direction == Direction.LONG
+        loss_side, profit_side = ("neeche", "upar") if bullish else ("upar", "neeche")
+        if spot_sl is not None and ((reference - spot_sl) if bullish else (spot_sl - reference)) < gap:
+            raise ValueError(
+                f"Nifty SL {reference_name} ({reference:,.2f}) se kam se kam {gap:g} point {loss_side} hona chahiye"
+            )
+        if spot_target is not None and ((spot_target - reference) if bullish else (reference - spot_target)) < gap:
+            raise ValueError(
+                f"Nifty target {reference_name} ({reference:,.2f}) se kam se kam {gap:g} point {profit_side} hona chahiye"
+            )
+
+    def expire_stale_level_order(self) -> None:
+        """A level order is valid only on the day it was placed."""
+        order = journal.get_active_level_order()
+        if order is not None and order["trade_date"] != self.get_today():
+            self._resolve_level(
+                order, LevelOrderStatus.EXPIRED, "Pichhle din ka level order - Nifty wahan nahi pahuncha tha, band kar diya."
+            )
+
+    def on_spot_price(self, spot: float) -> EntryIntent | ExitIntent | None:
+        """Live Nifty spot: a level order's trigger/entry, or the open position's Nifty SL/
+        target. At most one intent."""
+        if spot <= 0:
+            return None
+        self.expire_stale_level_order()
+        position = journal.get_open_position()
+        order = journal.get_active_level_order()
+        if order is not None:
+            intent = self._check_level_order(order, spot, position)
+            if intent is not None:
+                return intent
+        return self._check_spot_exit(position, spot) if position is not None else None
+
+    @staticmethod
+    def _level_hit(order: dict, spot: float) -> bool:
+        if order["trigger_when"] == "RISES_TO":
+            return spot >= order["trigger_price"]
+        return spot <= order["trigger_price"]
+
+    def _check_level_order(self, order: dict, spot: float, position: dict | None) -> EntryIntent | None:
+        if position is not None:
+            # One position at a time - and firing later, once it closes, would enter at a
+            # moment nobody chose.
+            if order["status"] == LevelOrderStatus.TRIGGERED or self._level_hit(order, spot):
+                self._resolve_level(
+                    order,
+                    LevelOrderStatus.CANCELLED,
+                    f"Nifty level ({order['trigger_price']:,.2f}) par pahuncha, par ek position pehle se khuli thi - level order cancel.",
+                )
+            return None
+        if order["status"] == LevelOrderStatus.WAITING:
+            if not self._level_hit(order, spot):
+                return None
+            journal.mark_level_order_triggered(order["id"])
+            log.info("level_order_triggered", level_order_id=order["id"], spot=spot, level=order["trigger_price"])
+            order = journal.get_level_order(order["id"])
+        return self._try_level_entry(order)
+
+    def _try_level_entry(self, order: dict) -> EntryIntent | None:
+        cfg = self.config.level_order
+        name = self._trade_name(order["direction"], order["structure_type"])
+        waited = (self.get_now() - order["triggered_at"]).total_seconds() if order["triggered_at"] else 0.0
+        if waited > cfg.entry_retry_sec:
+            self._resolve_level(
+                order,
+                LevelOrderStatus.FAILED,
+                f"Nifty level chhua, par {cfg.entry_retry_sec:g} sec tak {name} ka order nahi lag paaya "
+                f"({order['expiry']} ke option prices nahi mile) - level order cancel.",
+            )
+            return None
+        pretrade = pretrade_checks.run_pretrade_checks(self.max_trades_per_day, trade_date=self.get_today())
+        if not pretrade.allowed:
+            self._resolve_level(
+                order, LevelOrderStatus.FAILED, f"Nifty level chhua, par trade nahi laga: {pretrade.reason}. Level order cancel."
+            )
+            return None
+        if order["expiry"] not in {choice["expiry"] for choice in self.expiry_choices()}:
+            self._resolve_level(
+                order, LevelOrderStatus.FAILED, f"Level order ki expiry {order['expiry']} ab chunne layak nahi - level order cancel."
+            )
+            return None
+
+        legs = self._select_legs(order["direction"], order["structure_type"], order["expiry"])
+        if legs is None:
+            # Stays TRIGGERED: retried every check until the quotes arrive or entry_retry_sec runs out.
+            if not self._notice_is("level_waiting_quotes", None):
+                log.warning("level_entry_waiting_for_live_quotes", level_order_id=order["id"], expiry=order["expiry"])
+            self._set_notice(
+                f"Nifty level chhua - {name} ke liye {order['expiry']} ke option prices ka intezaar, koshish chalu hai.",
+                kind="level_waiting_quotes",
+            )
+            return None
+
+        if self._notice_is("level_waiting_quotes", None):
+            self.entry_notice = None
+        log.info("level_entry_intent_built", level_order_id=order["id"], trade=name, strikes=[leg.strike for leg in legs])
+        return EntryIntent(
+            direction=order["direction"],
+            structure_type=order["structure_type"],
+            expiry=order["expiry"],
+            legs=legs,
+            iv_rank=self._compute_iv_rank(),
+            backup_sl_loss_rs=self._backup_sl_loss_rs(),
+            spot_sl=order["spot_sl"],
+            spot_target=order["spot_target"],
+            level_order_id=order["id"],
+        )
+
+    def _check_spot_exit(self, position: dict, spot: float) -> ExitIntent | None:
+        bullish = position["direction"] == Direction.LONG
+        spot_sl, spot_target = position.get("spot_sl"), position.get("spot_target")
+        if spot_sl is not None and (spot <= spot_sl if bullish else spot >= spot_sl):
+            log.info("exit_spot_sl", position_id=position["id"], spot=spot, spot_sl=spot_sl)
+            return ExitIntent(reason=ExitReason.SPOT_SL)
+        if spot_target is not None and (spot >= spot_target if bullish else spot <= spot_target):
+            log.info("exit_spot_target", position_id=position["id"], spot=spot, spot_target=spot_target)
+            return ExitIntent(reason=ExitReason.SPOT_TARGET)
+        return None
+
+    def _resolve_level(self, order: dict, status: LevelOrderStatus, message: str) -> None:
+        journal.resolve_level_order(order["id"], status, note=message)
+        log.info("level_order_resolved", level_order_id=order["id"], status=status.value, note=message)
+        self._set_notice(message, kind="level")

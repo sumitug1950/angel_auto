@@ -6,8 +6,8 @@
 # Dashboard ke buttons yaad rakhein:
 #   Buying  = ITM option KHAREEDO + OTM option BECHO (hedge)
 #   Selling = ITM option BECHO    + OTM option KHAREEDO (hedge)
-#   Buying mein:   Long = Call,  Short = Put
-#   Selling mein:  Long = Put,   Short = Call
+#   Buying mein:   market upar = CALL khareedo,  market neeche = PUT khareedo
+#   Selling mein:  market upar = PUT becho,      market neeche = CALL becho
 #   Dono legs hamesha ek hi expiry aur ek hi type (Call+Call ya Put+Put) ki hoti hain.
 # =============================================================================
 
@@ -71,3 +71,10 @@ strategies:
       broker_backup_sl: true       # Selling trade mein sell leg par Angel One ke paas bhi SL order (app band ho jaye tab bhi bachaav).
                                    # Buying trade mein nahi lagta - usme buy leg ka SL sell leg ko akela (naked) chhod deta
       broker_backup_sl_multiple: 1.5  # broker SL tab lage jab sell leg ka loss sl_amount_rs x itna ho (app ka SL pehle lagta hai)
+
+    # --- Nifty level order (chart par click karke level / SL / target) -------------------
+    level_order:
+      enabled: true                # false = dashboard se level order nahi laga sakte
+      check_interval_sec: 1        # har itne second Nifty level, Nifty SL aur Nifty target check hote hain
+      min_gap_points: 2            # level abhi ke Nifty se kam se kam itne point door ho; SL/target level se itne point door
+      entry_retry_sec: 60          # level chhoone ke baad itne second tak order ki koshish (jaise option price na mile), phir cancel

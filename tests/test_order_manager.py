@@ -50,6 +50,21 @@ def test_debit_entry_fills_both_legs_itm_first():
     assert daily_state["trades_taken"] == 1
 
 
+def test_entry_saves_the_nifty_sl_and_target_on_the_position():
+    chain = _chain_with_quotes({"ITM": 300.0, "OTM": 65.0})
+    oms = OrderManager(PaperBroker(chain, starting_capital_rs=100000), entry_slippage_buffer_pts=1.0)
+    intent = EntryIntent(
+        direction=Direction.LONG, structure_type=StructureType.DEBIT, expiry="29SEP2026",
+        legs=[_leg("ITM", OrderSide.BUY, "ITM"), _leg("OTM", OrderSide.SELL, "OTM")],
+        spot_sl=24700.0, spot_target=24950.0,
+    )
+
+    oms.execute_entry(intent)
+
+    position = journal.get_open_position()
+    assert (position["spot_sl"], position["spot_target"]) == (24700.0, 24950.0)
+
+
 def test_credit_entry_fills_hedge_first():
     chain = _chain_with_quotes({"ITM": 300.0, "OTM": 65.0})
     broker = PaperBroker(chain, starting_capital_rs=100000)

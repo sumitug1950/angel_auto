@@ -3,6 +3,7 @@ question the rest of the system needs to ask:
 
 - DailyRiskState: "have we hit 2 trades or the daily loss limit yet today?"
 - DirectionRequest: "is there a Long/Short request pending MACD confirmation right now?"
+- LevelOrder: "is there a Nifty-level order waiting for spot to reach its level?"
 - Position / Leg: "what's open, what legs make it up, what's its live P&L?"
 - Order: "what did we actually send the broker for each leg, and what happened to it?"
 - EquityCurve: dashboard P&L chart / backtest reporting.
@@ -18,6 +19,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from angel_auto.core.enums import (
     Direction,
     ExitReason,
+    LevelOrderStatus,
     OptionType,
     OrderSide,
     OrderStatus,
@@ -106,6 +108,30 @@ class DirectionRequest(Base):
     position: Mapped["Position | None"] = relationship(back_populates="direction_request", uselist=False)
 
 
+class LevelOrder(Base):
+    """A Nifty-level order from the dashboard chart: once spot reaches trigger_price, the
+    saved trade enters straight away (no MACD gate), carrying its optional Nifty-price SL /
+    target onto the position. Valid only on trade_date; at most one WAITING/TRIGGERED."""
+
+    __tablename__ = "level_orders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    trade_date: Mapped[date] = mapped_column(Date, index=True)
+    direction: Mapped[Direction] = mapped_column(SAEnum(Direction))
+    structure_type: Mapped[StructureType] = mapped_column(SAEnum(StructureType))
+    expiry: Mapped[str] = mapped_column(String(20))
+    trigger_price: Mapped[float] = mapped_column(Float)
+    trigger_when: Mapped[str] = mapped_column(String(10))  # "RISES_TO" | "FALLS_TO" - which side of spot it was placed
+    spot_sl: Mapped[float | None] = mapped_column(Float, nullable=True)
+    spot_target: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[LevelOrderStatus] = mapped_column(SAEnum(LevelOrderStatus), index=True)
+    note: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    position_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    triggered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class Position(Base):
     """One traded spread (both legs together) - the unit the strategy's fixed SL/trailing-
     target/manual-exit logic operates on (combined P&L, not per-leg)."""
@@ -130,6 +156,9 @@ class Position(Base):
     net_pnl_rs: Mapped[float | None] = mapped_column(Float, nullable=True)  # realized_pnl_rs - charges_rs
     peak_profit_rs: Mapped[float] = mapped_column(Float, default=0.0)  # high-water mark for trailing stop
     trail_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Nifty spot-price SL/target (a level order's, or set on the open position) - on top of the Rs rules
+    spot_sl: Mapped[float | None] = mapped_column(Float, nullable=True)
+    spot_target: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     iv_rank_at_entry: Mapped[float | None] = mapped_column(Float, nullable=True)
 

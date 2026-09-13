@@ -169,6 +169,31 @@ button { font: inherit; color: inherit; }
 button:disabled { opacity: 0.4; cursor: not-allowed; }
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+/* Nifty level bar - sits right above the price chart; lines on the chart are draggable */
+.level-bar { border: 1px solid var(--border); border-radius: 8px; background: var(--page); padding: 8px 10px; margin-bottom: 10px; }
+.level-bar.has-order { border-color: rgba(250, 178, 25, 0.55); }
+.level-bar-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.level-bar-title { font-weight: 650; font-size: 0.82rem; }
+.seg .lb-dir.lb-long[aria-pressed="true"] { background: var(--good); color: #fff; }
+.seg .lb-dir.lb-short[aria-pressed="true"] { background: var(--critical); color: #fff; }
+.lb-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: center; border: 1px solid; border-radius: 999px; font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+.chip button { border: 0; background: transparent; cursor: pointer; padding: 3px 9px; font-weight: 600; border-radius: 999px; }
+.chip button:disabled { opacity: 1; cursor: default; }
+.chip .chip-x { padding: 3px 8px 3px 0; color: var(--text-2); }
+.chip .chip-x:hover { color: var(--text); }
+.chip-entry { border-color: rgba(57, 135, 229, 0.6); background: var(--accent-wash); }
+.chip-sl { border-color: rgba(208, 59, 59, 0.6); background: var(--critical-wash); }
+.chip-target { border-color: rgba(12, 163, 12, 0.55); background: var(--good-wash); }
+.chip-unsaved { border-style: dashed; }
+.lb-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.btn-small { padding: 5px 10px; font-size: 0.8rem; }
+.btn-primary { border-color: var(--accent); background: var(--accent); color: #fff; }
+.btn-primary:hover:not(:disabled) { background: #2f76cc; }
+.level-bar-status { margin-top: 6px; color: var(--text-2); font-size: 0.78rem; line-height: 1.4; }
+.level-bar .action-msg { margin-top: 2px; min-height: 0; }
+.price-chart.line-hover, .price-chart.line-hover *, .price-chart.line-dragging, .price-chart.line-dragging * { cursor: ns-resize !important; }
+
 .danger-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
 
 .banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; padding: 9px 12px; border-radius: 8px; border: 1px solid; font-size: 0.85rem; line-height: 1.4; }

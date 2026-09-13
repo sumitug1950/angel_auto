@@ -66,6 +66,9 @@ def main() -> int:
     margin = "haan" if app.mode.value == "live" or app.paper_trading.simulate_margin_check else "nahi (paper)"
     print(f"  broker backup SL: {backup}   |   entry se pehle margin check: {margin}   |   "
           f"fill ka intezaar {app.oms.fill_timeout_sec:g} sec")
+    lvl = s.level_order
+    print(f"  Nifty level order: {'chalu' if lvl.enabled else 'band'}   |   har {lvl.check_interval_sec:g} sec check   |   "
+          f"level/SL/target kam se kam {lvl.min_gap_points:g} point door   |   level chhoone ke baad {lvl.entry_retry_sec:g} sec tak koshish")
     print(f"  din ki limit: max {app.risk.max_trades_per_day} trade, loss Rs{app.risk.daily_loss_limit_rs:g}, "
           f"lagatar {app.risk.max_consecutive_losses} loss par band")
     print(f"  square-off {app.square_off.normal_time} (expiry din {app.square_off.expiry_day_time})")

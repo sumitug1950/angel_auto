@@ -88,6 +88,20 @@ class _FakeTradingApp:
     def request_expiry(self, expiry):
         return self.strategy.on_expiry_request(expiry)
 
+    def place_level_order(self, direction, structure_type, trigger_price, spot_sl=None, spot_target=None):
+        return self.strategy.place_level_order(
+            direction, structure_type, trigger_price, self._router.latest_spot, spot_sl, spot_target
+        )
+
+    def modify_level_order(self, trigger_price, spot_sl=None, spot_target=None):
+        self.strategy.modify_level_order(trigger_price, self._router.latest_spot, spot_sl, spot_target)
+
+    def cancel_level_order(self):
+        return self.strategy.cancel_level_order()
+
+    def set_position_spot_levels(self, spot_sl, spot_target):
+        self.strategy.set_position_spot_levels(self._router.latest_spot, spot_sl, spot_target)
+
     def cancel_pending(self):
         return self.strategy.cancel_pending_request()
 
@@ -180,6 +194,31 @@ def test_expiry_endpoint_accepts_only_offered_expiries(client):
     resp = client.post("/api/expiry", json={"expiry": EXPIRY})
     assert resp.status_code == 200
     assert client.get("/api/status").json()["selected_expiry"] == EXPIRY
+
+
+def test_level_order_endpoints_place_show_and_cancel(client):
+    order = {"direction": "LONG", "structure_type": "DEBIT", "trigger_price": 24850}
+    bad = client.post("/api/level-order", json={**order, "spot_sl": 24900})
+    assert bad.status_code == 400
+    assert "SL" in bad.json()["detail"]
+
+    assert client.post("/api/level-order", json={**order, "spot_sl": 24800, "spot_target": 24950}).status_code == 200
+    shown = client.get("/api/status").json()["level_order"]
+    assert (shown["trigger_price"], shown["trigger_when"], shown["status"]) == (24850.0, "RISES_TO", "WAITING")
+
+    moved = client.post("/api/level-order/modify", json={"trigger_price": 24870, "spot_sl": 24810, "spot_target": 24990})
+    assert moved.status_code == 200
+    shown = client.get("/api/status").json()["level_order"]
+    assert (shown["trigger_price"], shown["spot_sl"], shown["spot_target"]) == (24870.0, 24810.0, 24990.0)
+    assert client.post("/api/level-order/modify", json={"trigger_price": 24870, "spot_target": 24860}).status_code == 400
+
+    assert client.post("/api/level-order/cancel").json()["cancelled"] is True
+    assert client.get("/api/status").json()["level_order"] is None
+
+
+def test_position_levels_endpoint_needs_an_open_position(client):
+    resp = client.post("/api/position-levels", json={"spot_sl": 24700})
+    assert resp.status_code == 400
 
 
 def test_structure_endpoint_rejects_invalid_value(client):

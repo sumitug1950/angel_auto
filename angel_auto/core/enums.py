@@ -14,6 +14,7 @@ __all__ = [
     "OrderStatus",
     "PendingRequestStatus",
     "PositionStatus",
+    "LevelOrderStatus",
     "ExitReason",
 ]
 
@@ -63,9 +64,20 @@ class PositionStatus(str, Enum):
     ABORTED = "ABORTED"        # entry sequence failed before both legs were live
 
 
+class LevelOrderStatus(str, Enum):
+    WAITING = "WAITING"        # Nifty hasn't reached the level yet
+    TRIGGERED = "TRIGGERED"    # level reached - entry being attempted (e.g. waiting for option quotes)
+    EXECUTED = "EXECUTED"
+    CANCELLED = "CANCELLED"    # by you, by a newer level order, or a position was already open
+    EXPIRED = "EXPIRED"        # the day ended / square-off time came first
+    FAILED = "FAILED"          # level reached but the trade couldn't be placed
+
+
 class ExitReason(str, Enum):
     FIXED_SL = "FIXED_SL"
     TRAILING_STOP = "TRAILING_STOP"
+    SPOT_SL = "SPOT_SL"  # Nifty spot reached the position's Nifty-price SL
+    SPOT_TARGET = "SPOT_TARGET"  # Nifty spot reached the position's Nifty-price target
     OPPOSITE_MACD = "OPPOSITE_MACD"
     OPPOSITE_ZERO_CROSS = "OPPOSITE_ZERO_CROSS"  # legacy - only so old DB rows from the removed automatic strategies still load
     MANUAL_EXIT = "MANUAL_EXIT"

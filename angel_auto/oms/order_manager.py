@@ -143,6 +143,8 @@ class OrderManager:
             direction_request_id=intent.direction_request_id,
             iv_rank_at_entry=intent.iv_rank,
             strategy_name=strategy_name,
+            spot_sl=intent.spot_sl,
+            spot_target=intent.spot_target,
         )
         try:
             return self._enter_position(position_id, intent, trade_date, strategy_name)

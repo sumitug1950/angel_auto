@@ -1,11 +1,12 @@
 """REST API for the dashboard - status, chart history, trade log, logs, and the manual
-controls (Buying/Selling, Long/Short, cancel-pending, exit-now, kill-switch)."""
+controls (expiry, Buying/Selling, Long/Short, Nifty level orders + Nifty SL/target, cancel-pending,
+exit-now, kill-switch)."""
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from angel_auto.core.enums import Direction, StructureType
 from angel_auto.dashboard.state import get_trading_app
@@ -27,6 +28,25 @@ class StructureRequestBody(BaseModel):
 
 class ExpiryRequestBody(BaseModel):
     expiry: str
+
+
+class LevelOrderBody(BaseModel):
+    direction: Direction
+    structure_type: StructureType
+    trigger_price: float = Field(gt=0)
+    spot_sl: float | None = Field(default=None, gt=0)
+    spot_target: float | None = Field(default=None, gt=0)
+
+
+class LevelOrderChangeBody(BaseModel):
+    trigger_price: float = Field(gt=0)
+    spot_sl: float | None = Field(default=None, gt=0)
+    spot_target: float | None = Field(default=None, gt=0)
+
+
+class SpotLevelsBody(BaseModel):
+    spot_sl: float | None = Field(default=None, gt=0)  # None removes it
+    spot_target: float | None = Field(default=None, gt=0)
 
 
 @router.get("/status")
@@ -80,6 +100,44 @@ def post_expiry(body: ExpiryRequestBody):
     if not app.request_expiry(body.expiry):
         raise HTTPException(status_code=400, detail=f"{body.expiry} abhi chunne layak expiry nahi hai")
     return {"selected_expiry": body.expiry}
+
+
+@router.post("/level-order")
+def post_level_order(body: LevelOrderBody):
+    app = get_trading_app()
+    try:
+        order_id = app.place_level_order(
+            body.direction, body.structure_type, body.trigger_price, spot_sl=body.spot_sl, spot_target=body.spot_target
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"level_order_id": order_id}
+
+
+@router.post("/level-order/modify")
+def post_modify_level_order(body: LevelOrderChangeBody):
+    app = get_trading_app()
+    try:
+        app.modify_level_order(body.trigger_price, spot_sl=body.spot_sl, spot_target=body.spot_target)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"trigger_price": body.trigger_price, "spot_sl": body.spot_sl, "spot_target": body.spot_target}
+
+
+@router.post("/level-order/cancel")
+def post_cancel_level_order():
+    app = get_trading_app()
+    return {"cancelled": app.cancel_level_order()}
+
+
+@router.post("/position-levels")
+def post_position_levels(body: SpotLevelsBody):
+    app = get_trading_app()
+    try:
+        app.set_position_spot_levels(body.spot_sl, body.spot_target)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"spot_sl": body.spot_sl, "spot_target": body.spot_target}
 
 
 @router.post("/cancel-pending")

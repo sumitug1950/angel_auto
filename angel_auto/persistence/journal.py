@@ -11,6 +11,7 @@ from sqlalchemy import select
 from angel_auto.core.enums import (
     Direction,
     ExitReason,
+    LevelOrderStatus,
     OptionType,
     OrderSide,
     OrderStatus,
@@ -26,6 +27,7 @@ from angel_auto.persistence.models import (
     ExpiryPreference,
     IVHistory,
     Leg,
+    LevelOrder,
     Order,
     Position,
     StrategyPreference,
@@ -239,6 +241,114 @@ def get_pending_direction_request() -> dict | None:
         }
 
 
+# --- Nifty level orders (dashboard chart: enter when spot reaches a level) -------------
+
+ACTIVE_LEVEL_ORDER_STATUSES = (LevelOrderStatus.WAITING, LevelOrderStatus.TRIGGERED)
+
+
+def create_level_order(
+    trade_date: date,
+    direction: Direction,
+    structure_type: StructureType,
+    expiry: str,
+    trigger_price: float,
+    trigger_when: str,
+    spot_sl: float | None = None,
+    spot_target: float | None = None,
+) -> int:
+    """One level order at a time - a new one cancels whichever is still active."""
+    with session_scope() as session:
+        for old in session.scalars(select(LevelOrder).where(LevelOrder.status.in_(ACTIVE_LEVEL_ORDER_STATUSES))).all():
+            old.status = LevelOrderStatus.CANCELLED
+            old.note = "Naya level order laga - ye hat gaya"
+            old.resolved_at = _utcnow()
+        order = LevelOrder(
+            trade_date=trade_date,
+            direction=direction,
+            structure_type=structure_type,
+            expiry=expiry,
+            trigger_price=trigger_price,
+            trigger_when=trigger_when,
+            spot_sl=spot_sl,
+            spot_target=spot_target,
+            status=LevelOrderStatus.WAITING,
+        )
+        session.add(order)
+        session.flush()
+        return order.id
+
+
+def get_active_level_order() -> dict | None:
+    with session_scope() as session:
+        order = session.scalar(
+            select(LevelOrder)
+            .where(LevelOrder.status.in_(ACTIVE_LEVEL_ORDER_STATUSES))
+            .order_by(LevelOrder.created_at.desc())
+        )
+        return _level_order_dict(order) if order is not None else None
+
+
+def get_level_order(order_id: int) -> dict | None:
+    with session_scope() as session:
+        order = session.get(LevelOrder, order_id)
+        return _level_order_dict(order) if order is not None else None
+
+
+def update_level_order(
+    order_id: int, trigger_price: float, trigger_when: str, spot_sl: float | None, spot_target: float | None
+) -> bool:
+    """Moves a still-WAITING level order. False if it has already triggered or ended."""
+    with session_scope() as session:
+        order = session.get(LevelOrder, order_id)
+        if order is None or order.status != LevelOrderStatus.WAITING:
+            return False
+        order.trigger_price = trigger_price
+        order.trigger_when = trigger_when
+        order.spot_sl = spot_sl
+        order.spot_target = spot_target
+        return True
+
+
+def mark_level_order_triggered(order_id: int) -> None:
+    with session_scope() as session:
+        order = session.get(LevelOrder, order_id)
+        if order is not None and order.status == LevelOrderStatus.WAITING:
+            order.status = LevelOrderStatus.TRIGGERED
+            order.triggered_at = _utcnow()
+
+
+def resolve_level_order(
+    order_id: int, status: LevelOrderStatus, note: str | None = None, position_id: int | None = None
+) -> None:
+    with session_scope() as session:
+        order = session.get(LevelOrder, order_id)
+        if order is None:
+            return
+        order.status = status
+        order.note = note[:300] if note else None
+        order.position_id = position_id
+        order.resolved_at = _utcnow()
+
+
+def _level_order_dict(order: LevelOrder) -> dict:
+    return {
+        "id": order.id,
+        "trade_date": order.trade_date,
+        "direction": order.direction,
+        "structure_type": order.structure_type,
+        "expiry": order.expiry,
+        "trigger_price": order.trigger_price,
+        "trigger_when": order.trigger_when,
+        "spot_sl": order.spot_sl,
+        "spot_target": order.spot_target,
+        "status": order.status,
+        "note": order.note,
+        "position_id": order.position_id,
+        "created_at": _as_utc(order.created_at),
+        "triggered_at": _as_utc(order.triggered_at),
+    }
+
+
 # --- Positions / legs / orders ----------------------------------------------
 
 
@@ -249,6 +359,8 @@ def create_position(
     direction_request_id: int | None = None,
     iv_rank_at_entry: float | None = None,
     strategy_name: str = DEFAULT_STRATEGY_NAME,
+    spot_sl: float | None = None,
+    spot_target: float | None = None,
 ) -> int:
     with session_scope() as session:
         position = Position(
@@ -259,6 +371,8 @@ def create_position(
             status=PositionStatus.OPENING,
             expiry=expiry,
             iv_rank_at_entry=iv_rank_at_entry,
+            spot_sl=spot_sl,
+            spot_target=spot_target,
         )
         session.add(position)
         session.flush()
@@ -412,6 +526,15 @@ def update_position_status(position_id: int, status: PositionStatus, set_entry_t
             position.entry_time = _utcnow()
 
 
+def set_position_spot_levels(position_id: int, spot_sl: float | None, spot_target: float | None) -> None:
+    with session_scope() as session:
+        position = session.get(Position, position_id)
+        if position is None:
+            return
+        position.spot_sl = spot_sl
+        position.spot_target = spot_target
+
+
 def update_trailing_peak(position_id: int, peak_profit_rs: float, trail_active: bool = True) -> None:
     with session_scope() as session:
         position = session.get(Position, position_id)
@@ -487,6 +610,8 @@ def _find_position(strategy_name: str, statuses: list[PositionStatus]) -> dict |
             "entry_time": _as_utc(position.entry_time),
             "peak_profit_rs": position.peak_profit_rs,
             "trail_active": position.trail_active,
+            "spot_sl": position.spot_sl,
+            "spot_target": position.spot_target,
             "legs": legs,
         }
 

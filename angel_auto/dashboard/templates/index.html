@@ -25,7 +25,7 @@
       <div class="card-head">
         <div>
           <h2>Nifty spot · {{ candle_interval_sec }}-sec candles</h2>
-          <p class="card-sub">Neeche MACD — isi se entry confirm hoti hai</p>
+          <p class="card-sub">Neeche MACD — isi se entry confirm hoti hai · Chart par click / line drag karke Nifty level, SL, target</p>
         </div>
         <div class="seg seg-small" id="range-buttons" role="group" aria-label="Chart range">
           <button type="button" data-minutes="15">15m</button>
@@ -33,6 +33,29 @@
           <button type="button" data-minutes="60">1h</button>
           <button type="button" data-minutes="0">Poora din</button>
         </div>
+      </div>
+      <div class="level-bar" id="level-bar">
+        <div class="level-bar-row">
+          <span class="level-bar-title">Nifty level</span>
+          <div class="seg seg-small" id="click-mode" role="group" aria-label="Chart par click se kya lage">
+            <button type="button" data-mode="entry" aria-pressed="true">Entry</button>
+            <button type="button" data-mode="sl" aria-pressed="false">SL</button>
+            <button type="button" data-mode="target" aria-pressed="false">Target</button>
+          </div>
+          <div class="seg seg-small" id="lb-direction" role="group" aria-label="Level par kya trade lage">
+            <button type="button" id="lvl-long" class="lb-dir lb-long" aria-pressed="true">▲ CALL khareedo</button>
+            <button type="button" id="lvl-short" class="lb-dir lb-short" aria-pressed="false">▼ PUT khareedo</button>
+          </div>
+          <div class="lb-chips" id="lb-chips"></div>
+          <div class="lb-actions">
+            <button type="button" class="btn btn-ghost btn-small" id="btn-level-type" title="Bhaav type karke lagao">✎ Likho</button>
+            <button type="button" class="btn btn-primary btn-small" id="btn-level-save">Level order lagao</button>
+            <button type="button" class="btn btn-ghost btn-small" id="btn-level-undo" hidden>Wapas</button>
+            <button type="button" class="btn btn-warning btn-small" id="btn-level-cancel" hidden>Level order cancel</button>
+          </div>
+        </div>
+        <div class="level-bar-status" id="lb-status">Chart par click karke Entry level lagao</div>
+        <div id="level-msg" class="action-msg" aria-live="polite"></div>
       </div>
       <div class="chart-wrap chart-wrap-grow">
         <div class="chart-legend" id="price-legend"></div>
@@ -118,6 +141,7 @@
             <div class="meter-labels"><span id="meter-sl">SL</span><span>₹0</span><span id="meter-target">Target</span></div>
           </div>
           <p class="hint" id="trail-info"></p>
+          <p class="hint" id="spot-levels-info" hidden></p>
           <div class="table-scroll">
             <table class="data-table">
               <thead><tr><th>Leg</th><th>Strike</th><th class="num">Entry</th><th class="num">LTP</th><th class="num">P&amp;L</th></tr></thead>
@@ -210,7 +234,7 @@ const EXIT_REASON = {
   FIXED_SL: "Stop-loss", TRAILING_STOP: "Trailing stop", OPPOSITE_MACD: "MACD ulta", MANUAL_EXIT: "Manual exit",
   KILL_SWITCH: "Kill switch", SQUARE_OFF: "Square-off", DAILY_LOSS_LIMIT: "Din ka loss limit", BROKER_SL: "Broker SL",
   RECOVERED: "Restart par band mili", EXTERNAL: "App ke bahar band hui",
-  OPPOSITE_ZERO_CROSS: "MACD ulta",
+  OPPOSITE_ZERO_CROSS: "MACD ulta", SPOT_SL: "Nifty SL", SPOT_TARGET: "Nifty target",
 };
 const BUTTON_NAME = { DEBIT: "Buying", CREDIT: "Selling", SINGLE_LEG: "Single leg" };
 
@@ -306,15 +330,16 @@ tickClock();
 
 // --- Actions ----------------------------------------------------------------------
 
-function showMsg(text, className = "") {
-  const msg = el("action-msg");
+const msgTimers = {};
+function showMsg(text, className = "", targetId = "action-msg") {
+  const msg = el(targetId);
   msg.textContent = text;
   msg.className = "action-msg " + className;
-  clearTimeout(showMsg.timer);
-  if (text) showMsg.timer = setTimeout(() => { msg.textContent = ""; }, 7000);
+  clearTimeout(msgTimers[targetId]);
+  if (text) msgTimers[targetId] = setTimeout(() => { msg.textContent = ""; }, 7000);
 }
 
-async function postAction(url, body) {
+async function postAction(url, body, targetId = "action-msg") {
   try {
     const resp = await fetch(url, {
       method: "POST",
@@ -323,12 +348,13 @@ async function postAction(url, body) {
     });
     const json = await resp.json().catch(() => ({}));
     if (!resp.ok) {
-      showMsg("Galti: " + (json.detail || "server ne mana kiya (" + resp.status + ")"), "neg");
+      const detail = Array.isArray(json.detail) ? "value sahi nahi hai" : json.detail;
+      showMsg("Galti: " + (detail || "server ne mana kiya (" + resp.status + ")"), "neg", targetId);
       return null;
     }
     return json;
   } catch (err) {
-    showMsg("Server se connection nahi hua", "neg");
+    showMsg("Server se connection nahi hua", "neg", targetId);
     return null;
   } finally {
     refreshStatus();
@@ -399,6 +425,7 @@ function applyStatus(data) {
   el("vix").textContent = data.vix ? data.vix.toFixed(2) : "--";
 
   renderControls(data);
+  renderLevel(data);
   renderPosition(data);
   renderToday(data);
 
@@ -487,6 +514,12 @@ function renderPosition(data) {
     ? `Trailing ON · sabse zyada ${rs(pos.peak_profit_rs)} · ${rs(pos.peak_profit_rs - rules.trail_gap_rs)} par exit`
     : `Stop-loss ${rs(-sl)} · ${rs(target)} par trailing shuru (gap ${rs(rules.trail_gap_rs, false)})`;
 
+  const spotLevels = [];
+  if (pos.spot_sl) spotLevels.push(`Nifty SL ${px(pos.spot_sl)}`);
+  if (pos.spot_target) spotLevels.push(`Nifty target ${px(pos.spot_target)}`);
+  el("spot-levels-info").hidden = !spotLevels.length;
+  el("spot-levels-info").textContent = spotLevels.join(" · ") + " · ₹ wale SL/target ke saath, jo pehle lage";
+
   const body = el("legs-body");
   body.replaceChildren();
   for (const leg of pos.legs) {
@@ -536,6 +569,376 @@ function connectStatusWs() {
   };
   ws.onerror = () => ws.close();
 }
+
+// --- Nifty level order (sab kuch chart par) ---------------------------------------
+// Click the price chart to set Entry / SL / Target, drag a line to move it, and save from the
+// bar above the chart. No position: a level order. Position open: its Nifty SL / target.
+// Nothing reaches the server until a save button is pressed - dotted lines are unsaved.
+
+const LEVEL_KINDS = ["entry", "sl", "target"];
+const KIND_LABEL = { entry: "Entry", sl: "SL", target: "Target" };
+const LINE_TITLE = { entry: "Entry level", sl: "Nifty SL", target: "Nifty target" };
+const DRAG_HIT_PX = { mouse: 7, pen: 10, touch: 18 };
+const emptyLevels = () => ({ entry: null, sl: null, target: null });
+const sameLevels = (a, b) => LEVEL_KINDS.every((kind) => a[kind] === b[kind]);
+
+let levelDirection = "LONG";
+let clickMode = "entry";
+let levelModeKey = "";
+let levelSaved = emptyLevels();
+let levelDraft = emptyLevels();
+const levelLineObjs = {};
+let dragKind = null;
+
+function levelContext() {
+  const s = lastStatus;
+  const pos = s ? s.open_position : null;
+  const order = s ? s.level_order : null;
+  let mode = "new";
+  if (pos) mode = "position";
+  else if (order) mode = order.status === "TRIGGERED" ? "triggered" : "order";
+  return { s, pos, order, mode, enabled: !!(s && s.flagship_enabled && s.level_order_enabled) };
+}
+
+function editableKinds(ctx) {
+  if (!ctx.enabled || ctx.mode === "triggered") return [];
+  return ctx.mode === "position" ? ["sl", "target"] : LEVEL_KINDS;
+}
+
+function savedLevels(ctx) {
+  if (ctx.pos) return { entry: null, sl: ctx.pos.spot_sl, target: ctx.pos.spot_target };
+  if (ctx.order) return { entry: ctx.order.trigger_price, sl: ctx.order.spot_sl, target: ctx.order.spot_target };
+  return emptyLevels();
+}
+
+function setClickMode(mode) {
+  clickMode = mode;
+  document.querySelectorAll("#click-mode button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
+}
+document.querySelectorAll("#click-mode button").forEach((b) => { b.onclick = () => setClickMode(b.dataset.mode); });
+
+el("lvl-long").onclick = () => { levelDirection = "LONG"; renderLevelUi(); };
+el("lvl-short").onclick = () => { levelDirection = "SHORT"; renderLevelUi(); };
+
+function renderLevel() {
+  const ctx = levelContext();
+  const saved = savedLevels(ctx);
+  const key = ctx.pos ? "pos:" + ctx.pos.id : ctx.order ? `order:${ctx.order.id}:${ctx.order.status}` : "new";
+  if (key !== levelModeKey) {
+    levelModeKey = key;
+    levelDraft = { ...saved };
+    setClickMode(ctx.pos ? "sl" : "entry");
+  } else if (!dragKind && !sameLevels(saved, levelSaved) && sameLevels(levelDraft, levelSaved)) {
+    levelDraft = { ...saved };  // saved from elsewhere and not being edited here - follow it
+  }
+  levelSaved = saved;
+  renderLevelUi();
+}
+
+function renderLevelUi() {
+  const ctx = levelContext();
+  if (!ctx.s) return;
+  const editable = editableKinds(ctx);
+  const dirty = !sameLevels(levelDraft, levelSaved);
+  const structure = ctx.s.structure_preference;
+
+  el("level-bar").classList.toggle("has-order", !!ctx.order);
+  el("click-mode").hidden = editable.length === 0;
+  document.querySelectorAll("#click-mode button").forEach((b) => { b.hidden = !editable.includes(b.dataset.mode); });
+  if (editable.length && !editable.includes(clickMode)) setClickMode(editable[0]);
+
+  el("lb-direction").hidden = !(ctx.mode === "new" && ctx.enabled);
+  el("lvl-long").textContent = "▲ " + tradeName("LONG", structure);
+  el("lvl-short").textContent = "▼ " + tradeName("SHORT", structure);
+  el("lvl-long").setAttribute("aria-pressed", String(levelDirection === "LONG"));
+  el("lvl-short").setAttribute("aria-pressed", String(levelDirection === "SHORT"));
+
+  renderLevelChips(ctx, editable);
+
+  const save = el("btn-level-save");
+  el("btn-level-type").hidden = editable.length === 0;
+  if (ctx.mode === "new") {
+    const reason = !ctx.s.selected_expiry ? "Pehle Trade control mein expiry chuno"
+      : levelDraft.entry === null ? "Pehle chart par Entry level lagao" : "";
+    save.hidden = !ctx.enabled;
+    save.textContent = "Level order lagao";
+    save.disabled = !!reason;
+    save.title = reason;
+  } else {
+    save.hidden = !dirty || editable.length === 0;
+    save.textContent = ctx.mode === "position" ? "SL / target set karo" : "Badlaav save karo";
+    save.disabled = ctx.mode === "order" && levelDraft.entry === null;
+    save.title = save.disabled ? "Entry level chahiye" : "";
+  }
+
+  const undo = el("btn-level-undo");
+  undo.hidden = !dirty;
+  undo.textContent = ctx.mode === "new" ? "Saaf karo" : "Wapas";
+
+  const cancel = el("btn-level-cancel");
+  if (ctx.order) {
+    cancel.hidden = false;
+    cancel.textContent = "Level order cancel";
+  } else {
+    cancel.hidden = !(ctx.pos && (levelSaved.sl !== null || levelSaved.target !== null));
+    cancel.textContent = "SL / target hatao";
+  }
+
+  el("lb-status").textContent = levelStatusText(ctx, dirty, structure);
+  renderLevelLines();
+}
+
+function levelStatusText(ctx, dirty, structure) {
+  const s = ctx.s;
+  if (!s.flagship_enabled) return "Strategy band hai (config)";
+  if (!s.level_order_enabled) return "Level order config mein band hai (strategies.yaml)";
+  const order = ctx.order;
+  const orderText = order
+    ? `Nifty ${px(order.trigger_price)} ${order.trigger_when === "RISES_TO" ? "tak chadhe" : "tak gire"} → ` +
+      `${tradeName(order.direction, order.structure_type)} · ${expiryLabel(order.expiry)} · sirf aaj`
+    : "";
+  if (ctx.mode === "position") {
+    const base = dirty
+      ? "Badlaav save nahi hua — “SL / target set karo” dabao"
+      : "Khuli position ka Nifty SL / target: chart par click karo ya line ko pakad kar khiskao";
+    return order ? `${base} · Level order bhi waiting: ${orderText}` : base;
+  }
+  if (ctx.mode === "triggered") return `Level chhua — ${tradeName(order.direction, order.structure_type)} ka order ja raha hai`;
+  if (ctx.mode === "order") return `Waiting: ${orderText}` + (dirty ? " — badlaav abhi save nahi hua" : " · line khiska kar badal sakte ho");
+  if (levelDraft.entry === null) return "Chart par click karo: pehle Entry, phir SL, phir Target · line ko pakad kar upar-neeche khiskao";
+  const expiry = s.selected_expiry ? `${expiryLabel(s.selected_expiry)} expiry` : "expiry nahi chuni";
+  return `Nifty ${px(levelDraft.entry)} aate hi ${tradeName(levelDirection, structure)} · ${BUTTON_NAME[structure] || structure} · ${expiry} — abhi laga nahi`;
+}
+
+let renderedChipsKey = "";
+function renderLevelChips(ctx, editable) {
+  // rebuilt only on a change - status arrives every 1.5 s and a rebuild mid-click would eat the click
+  const key = JSON.stringify([levelDraft, levelSaved, editable, ctx.mode]);
+  if (key === renderedChipsKey) return;
+  renderedChipsKey = key;
+  const box = el("lb-chips");
+  box.replaceChildren();
+  for (const kind of LEVEL_KINDS) {
+    const value = levelDraft[kind];
+    if (value === null) continue;
+    const canEdit = editable.includes(kind);
+    const chip = document.createElement("span");
+    chip.className = `chip chip-${kind}` + (value !== levelSaved[kind] ? " chip-unsaved" : "");
+    const label = document.createElement("button");
+    label.type = "button";
+    label.textContent = `${KIND_LABEL[kind]} ${px(value)}`;
+    label.disabled = !canEdit;
+    label.title = canEdit ? "Click karke theek bhaav likho" : "";
+    label.onclick = () => typeLevel(kind);
+    chip.appendChild(label);
+    if (canEdit && !(kind === "entry" && ctx.mode === "order")) {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "chip-x";
+      remove.textContent = "✕";
+      remove.setAttribute("aria-label", KIND_LABEL[kind] + " hatao");
+      remove.onclick = () => { levelDraft[kind] = null; renderLevelUi(); };
+      chip.appendChild(remove);
+    }
+    box.appendChild(chip);
+  }
+}
+
+function renderLevelLines() {
+  if (!candleSeries) return;
+  const colors = { entry: C.macd, sl: C.down, target: C.up };
+  for (const kind of LEVEL_KINDS) {
+    const price = levelDraft[kind];
+    const line = levelLineObjs[kind];
+    if (price === null) {
+      if (line) {
+        candleSeries.removePriceLine(line);
+        delete levelLineObjs[kind];
+      }
+      continue;
+    }
+    const unsaved = price !== levelSaved[kind];
+    const options = {
+      price, color: colors[kind], lineWidth: 2, axisLabelVisible: true,
+      lineStyle: unsaved ? LightweightCharts.LineStyle.Dotted : LightweightCharts.LineStyle.Dashed,
+      title: LINE_TITLE[kind] + (unsaved ? " · save nahi" : ""),
+    };
+    if (line) line.applyOptions(options);
+    else levelLineObjs[kind] = candleSeries.createPriceLine(options);
+  }
+}
+
+function typeLevel(kind) {
+  const current = levelDraft[kind];
+  const raw = prompt(`${LINE_TITLE[kind]} ka Nifty bhaav likho`, current === null ? "" : String(current));
+  if (raw === null) return;
+  const value = Number(raw.trim().replaceAll(",", ""));
+  if (!Number.isFinite(value) || value <= 0) {
+    showMsg("Sahi bhaav likho, jaise 24850", "neg", "level-msg");
+    return;
+  }
+  levelDraft[kind] = Math.round(value * 20) / 20;
+  renderLevelUi();
+}
+el("btn-level-type").onclick = () => {
+  if (editableKinds(levelContext()).includes(clickMode)) typeLevel(clickMode);
+};
+
+const priceChartBox = el("price-chart");
+
+// Chart click / tap: set the chosen level there, then move on to the next empty one. Detected
+// here (press and release on the same spot) instead of the chart's own click event, which drops
+// quick successive clicks as a double-click; a press that moves is the chart being panned.
+const CLICK_SLOP_PX = 5;
+const CLICK_MAX_MS = 600;
+let chartPress = null;
+
+function placeLevelAt(clientY) {
+  if (!candleSeries || !barCount) return;
+  const editable = editableKinds(levelContext());
+  if (!editable.includes(clickMode)) return;
+  const price = candleSeries.coordinateToPrice(clientY - priceChartBox.getBoundingClientRect().top);
+  if (price === null || !Number.isFinite(price)) return;
+  levelDraft[clickMode] = Math.round(price);
+  const next = { entry: "sl", sl: "target" }[clickMode];
+  if (next && editable.includes(next) && levelDraft[next] === null) setClickMode(next);
+  renderLevelUi();
+}
+
+// Drag & drop: grab a line near the pointer, move it, drop it. The chart's own panning is
+// switched off meanwhile so the candles don't scroll under the pointer.
+
+function lineAt(clientY, pointerType) {
+  if (!candleSeries) return null;
+  const y = clientY - priceChartBox.getBoundingClientRect().top;
+  let best = null;
+  for (const kind of editableKinds(levelContext())) {
+    if (levelDraft[kind] === null) continue;
+    const coord = candleSeries.priceToCoordinate(levelDraft[kind]);
+    if (coord === null) continue;
+    const dist = Math.abs(coord - y);
+    if (dist <= (DRAG_HIT_PX[pointerType] || 8) && (!best || dist < best.dist)) best = { kind, dist };
+  }
+  return best ? best.kind : null;
+}
+
+priceChartBox.addEventListener("pointerdown", (evt) => {
+  if (evt.button !== 0) return;
+  const kind = lineAt(evt.clientY, evt.pointerType);
+  if (!kind) {
+    chartPress = { id: evt.pointerId, x: evt.clientX, y: evt.clientY, at: Date.now() };  // maybe a click - the chart still pans
+    return;
+  }
+  chartPress = null;
+  evt.preventDefault();
+  evt.stopPropagation();
+  dragKind = kind;
+  priceChart.applyOptions({ handleScroll: false, handleScale: false });
+  priceChartBox.classList.add("line-dragging");
+}, true);
+priceChartBox.addEventListener("mousedown", (evt) => { if (dragKind) evt.stopPropagation(); }, true);
+priceChartBox.addEventListener("touchstart", (evt) => {
+  if (!dragKind) return;
+  evt.preventDefault();  // no page scroll / chart pan while a line is held
+  evt.stopPropagation();
+}, { capture: true, passive: false });
+window.addEventListener("touchmove", (evt) => { if (dragKind) evt.preventDefault(); }, { passive: false });
+
+window.addEventListener("pointermove", (evt) => {
+  if (!dragKind) {
+    if (evt.pointerType === "mouse") {
+      priceChartBox.classList.toggle("line-hover", priceChartBox.contains(evt.target) && !!lineAt(evt.clientY, "mouse"));
+    }
+    return;
+  }
+  const price = candleSeries.coordinateToPrice(evt.clientY - priceChartBox.getBoundingClientRect().top);
+  if (price === null || !Number.isFinite(price)) return;
+  const rounded = Math.round(price);
+  if (rounded !== levelDraft[dragKind]) {
+    levelDraft[dragKind] = rounded;
+    renderLevelUi();
+  }
+});
+
+function endLineDrag() {
+  if (!dragKind) return;
+  dragKind = null;
+  priceChart.applyOptions({ handleScroll: true, handleScale: true });
+  priceChartBox.classList.remove("line-dragging");
+  renderLevelUi();
+}
+window.addEventListener("pointerup", (evt) => {
+  if (dragKind) {
+    endLineDrag();
+    return;
+  }
+  const press = chartPress;
+  chartPress = null;
+  if (!press || press.id !== evt.pointerId || !priceChartBox.contains(evt.target)) return;
+  const moved = Math.hypot(evt.clientX - press.x, evt.clientY - press.y);
+  if (moved <= CLICK_SLOP_PX && Date.now() - press.at <= CLICK_MAX_MS) placeLevelAt(evt.clientY);
+});
+window.addEventListener("pointercancel", () => {
+  chartPress = null;
+  endLineDrag();
+});
+
+el("btn-level-save").onclick = async () => {
+  const ctx = levelContext();
+  if (!ctx.s) return;
+  const { entry, sl, target } = levelDraft;
+  const levelsText = `Nifty SL: ${sl === null ? "nahi" : px(sl)}   ·   Nifty target: ${target === null ? "nahi" : px(target)}`;
+
+  if (ctx.mode === "position") {
+    if (await postAction("/api/position-levels", { spot_sl: sl, spot_target: target }, "level-msg")) {
+      showMsg("Nifty SL / target set ho gaya", "pos", "level-msg");
+    }
+    return;
+  }
+  if (ctx.mode === "order") {
+    if (!confirm(`Level order badlein?\nEntry: ${px(entry)}\n${levelsText}`)) return;
+    if (await postAction("/api/level-order/modify", { trigger_price: entry, spot_sl: sl, spot_target: target }, "level-msg")) {
+      showMsg("Level order badal diya", "pos", "level-msg");
+    }
+    return;
+  }
+  if (entry === null) return;
+  const structure = ctx.s.structure_preference;
+  const name = tradeName(levelDirection, structure);
+  const ok = confirm(
+    `Nifty ${px(entry)} par aate hi: ${name} (${expiryLabel(ctx.s.selected_expiry)} expiry)\n${levelsText}\n` +
+    "₹ wala SL/target bhi chalu rahega. Sirf aaj ke liye.\nLagayein?"
+  );
+  if (!ok) return;
+  const result = await postAction(
+    "/api/level-order",
+    { direction: levelDirection, structure_type: structure, trigger_price: entry, spot_sl: sl, spot_target: target },
+    "level-msg"
+  );
+  if (result) showMsg(`Level order lag gaya — Nifty ${px(entry)} aate hi ${name}`, "pos", "level-msg");
+};
+
+el("btn-level-undo").onclick = () => {
+  levelDraft = { ...levelSaved };
+  const editable = editableKinds(levelContext());
+  if (editable.length) setClickMode(editable[0]);
+  renderLevelUi();
+};
+
+el("btn-level-cancel").onclick = async () => {
+  const ctx = levelContext();
+  if (ctx.order) {
+    if (!confirm("Level order cancel karein?")) return;
+    const result = await postAction("/api/level-order/cancel", null, "level-msg");
+    if (result) showMsg(result.cancelled ? "Level order cancel ho gaya" : "Koi level order nahi tha", "", "level-msg");
+    return;
+  }
+  if (!ctx.pos || !confirm("Khuli position ka Nifty SL aur target dono hatayein? (₹ wala SL/target chalta rahega)")) return;
+  if (await postAction("/api/position-levels", { spot_sl: null, spot_target: null }, "level-msg")) {
+    levelDraft = emptyLevels();
+    showMsg("Nifty SL / target hata diya", "", "level-msg");
+  }
+};
 
 // --- Trades -----------------------------------------------------------------------
 

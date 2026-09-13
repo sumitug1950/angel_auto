@@ -31,7 +31,7 @@ from angel_auto.broker.angelone_rest import AngelOneBroker
 from angel_auto.broker.angelone_ws import EXCHANGE_NSE_CM, EXCHANGE_NSE_FO, MODE_LTP, MODE_QUOTE, AngelOneWebSocket
 from angel_auto.broker.base import BrokerAdapter
 from angel_auto.broker.paper_broker import PaperBroker
-from angel_auto.core.enums import Direction, ExitReason, Mode, StructureType
+from angel_auto.core.enums import Direction, ExitReason, LevelOrderStatus, Mode, StructureType
 from angel_auto.data.historical import bootstrap_vix_history, capture_eod_vix_close
 from angel_auto.data.instruments import InstrumentMaster
 from angel_auto.data.live_feed import GreeksRefresher, LiveFeedRouter, build_subscription_tokens
@@ -93,6 +93,7 @@ class TradingApp:
         self._subscriptions: list[tuple[int, list[str], int]] = []  # re-sent after a feed reconnect
         self._last_feed_restart = 0.0
         self._subscribed_expiries: set[str] = set()
+        self._last_fast_exit_at = -math.inf  # time.monotonic() of the 1-sec loop's last exit attempt
 
         self.broker: BrokerAdapter | None = None
         self.strategy: MacdItmOtmSpreadStrategy | None = None
@@ -262,6 +263,46 @@ class TradingApp:
         with self._trading_lock:
             return self.strategy.cancel_pending_request()
 
+    def place_level_order(
+        self,
+        direction: Direction,
+        structure_type: StructureType,
+        trigger_price: float,
+        spot_sl: float | None = None,
+        spot_target: float | None = None,
+    ) -> int:
+        """Dashboard Nifty-level order (see strategy.place_level_order). A ValueError carries
+        the dashboard message when it can't be placed."""
+        if self.strategy is None:
+            raise ValueError("Strategy band hai (config)")
+        with self._trading_lock:
+            if self._square_off_due():
+                raise ValueError("Square-off ka time ho chuka hai - aaj naya trade nahi lagega")
+            spot = self._router.latest_spot if self._router is not None else 0.0
+            return self.strategy.place_level_order(direction, structure_type, trigger_price, spot, spot_sl, spot_target)
+
+    def modify_level_order(self, trigger_price: float, spot_sl: float | None = None, spot_target: float | None = None) -> None:
+        """Moves the waiting level order (see strategy.modify_level_order)."""
+        if self.strategy is None:
+            raise ValueError("Strategy band hai (config)")
+        with self._trading_lock:
+            spot = self._router.latest_spot if self._router is not None else 0.0
+            self.strategy.modify_level_order(trigger_price, spot, spot_sl, spot_target)
+
+    def cancel_level_order(self) -> bool:
+        if self.strategy is None:
+            return False
+        with self._trading_lock:
+            return self.strategy.cancel_level_order()
+
+    def set_position_spot_levels(self, spot_sl: float | None, spot_target: float | None) -> None:
+        """Nifty-price SL/target on the open position; None removes that level."""
+        if self.strategy is None:
+            raise ValueError("Strategy band hai (config)")
+        with self._trading_lock:
+            spot = self._router.latest_spot if self._router is not None else 0.0
+            self.strategy.set_position_spot_levels(spot, spot_sl, spot_target)
+
     def manual_exit(self) -> None:
         if self.strategy is None:
             return
@@ -273,13 +314,25 @@ class TradingApp:
     def kill_switch(self, reason: str = "manual kill-switch") -> None:
         with self._trading_lock:
             circuit_breaker.trigger_kill_switch(reason)
+            if self.strategy is not None and self.strategy.cancel_level_order():
+                self.strategy.record_entry_notice("Kill switch - waiting level order bhi cancel kar diya.")
             self.manual_exit()
 
     # --- Internal loops ---------------------------------------------------
 
     def _market_data_loop(self) -> None:
-        interval = self.settings.strategies.active.check_interval_sec
-        while not self._stop_event.wait(interval):
+        strat_cfg = self.settings.strategies.active
+        wake_sec = min(strat_cfg.check_interval_sec, strat_cfg.level_order.check_interval_sec)
+        next_cycle = time.monotonic() + strat_cfg.check_interval_sec
+        while not self._stop_event.wait(wake_sec):
+            if self.strategy is not None:
+                try:
+                    self._run_level_cycle()
+                except Exception:
+                    log.exception("level_cycle_failed")
+            if time.monotonic() < next_cycle:
+                continue
+            next_cycle = time.monotonic() + strat_cfg.check_interval_sec
             try:
                 self._check_feed()
             except Exception:
@@ -290,6 +343,48 @@ class TradingApp:
                 self._run_cycle()
             except Exception:
                 log.exception("market_data_loop_cycle_failed")
+
+    def _run_level_cycle(self) -> None:
+        """Every level_order.check_interval_sec (1 sec by default), on the live Nifty spot: a
+        level order's entry and the open position's Nifty SL/target. The Rs SL/target/
+        trailing and MACD requests stay on the slower _run_cycle."""
+        with self._trading_lock:
+            self.strategy.expire_stale_level_order()
+            if self._square_off_due():
+                order = journal.get_active_level_order()
+                if order is not None:
+                    note = "Square-off ka time ho gaya - level order cancel, aaj naya trade nahi."
+                    journal.resolve_level_order(order["id"], LevelOrderStatus.EXPIRED, note=note)
+                    self.strategy.record_entry_notice(note)
+                return  # _run_cycle squares off whatever is open
+            if self._router is None or not self._market_open_now():
+                return
+            if self._router.seconds_since_spot_tick() > FEED_STALE_SEC:
+                return  # never trigger a level or stop out on a stale Nifty price
+            intent = self.strategy.on_spot_price(self._router.latest_spot)
+            if isinstance(intent, EntryIntent):
+                self._execute_level_entry(intent)
+            elif isinstance(intent, ExitIntent):
+                now = time.monotonic()
+                if now - self._last_fast_exit_at < self.settings.strategies.active.check_interval_sec:
+                    return  # an exit that just failed is retried at the normal pace, not every second
+                self._last_fast_exit_at = now
+                self._dispatch_exit(intent)
+
+    def _execute_level_entry(self, intent: EntryIntent) -> None:
+        position_id = self._execute_entry(intent)
+        if position_id is None:
+            journal.resolve_level_order(
+                intent.level_order_id, LevelOrderStatus.FAILED, note=self.oms.last_notice or "Order nahi laga"
+            )
+            return
+        journal.resolve_level_order(
+            intent.level_order_id, LevelOrderStatus.EXECUTED, note="Nifty level chhua - trade laga", position_id=position_id
+        )
+        if journal.get_pending_direction_request() is not None:
+            # it would otherwise fire on its own once this position closes
+            self.strategy.cancel_pending_request()
+            self.strategy.record_entry_notice("Nifty level order se trade laga - MACD wali pending request cancel kar di.")
 
     def _run_cycle(self) -> None:
         with self._trading_lock:
@@ -339,12 +434,13 @@ class TradingApp:
             return "Angel One se live price nahi aa rahe (feed ruka hai) - naya trade nahi bheja."
         return None
 
-    def _execute_entry(self, intent: EntryIntent) -> None:
+    def _execute_entry(self, intent: EntryIntent) -> int | None:
         position_id = self.oms.execute_entry(intent)
         if self.oms.last_notice:
             self.strategy.record_entry_notice(self.oms.last_notice)
         elif position_id is None:
-            self.strategy.record_entry_notice("Order nahi laga - logs dekhein, phir dobara Long/Short dabayein.")
+            self.strategy.record_entry_notice("Order nahi laga - logs dekhein, phir dobara CALL/PUT button dabayein.")
+        return position_id
 
     def _dispatch_exit(self, intent: ExitIntent) -> None:
         with self._trading_lock:

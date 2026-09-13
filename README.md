@@ -3,7 +3,9 @@
 Angel One (SmartAPI) par **Nifty options** ka trading system. Aap dashboard par batate ho
 market kis taraf jayega (upar/neeche) aur option khareedna hai ya bechna (Buying/Selling).
 App MACD se sahi time dekh kar **2 options ka spread** lagati hai, aur SL / target / trailing /
-square-off par khud nikal jaati hai. Paper (nakli paisa) aur live (asli paisa), dono mode hain.
+square-off par khud nikal jaati hai. Doosra tarika: chart par **Nifty ka level** laga do - Nifty wahan aate hi
+trade lag jaata hai, aur SL / target bhi Nifty ke bhaav mein laga sakte ho.
+Paper (nakli paisa) aur live (asli paisa), dono mode hain.
 
 > Ye README aapke liye hai - shuru se aakhir tak sab kuch khud kar sako, isliye har cheez
 > kadam-kadam likhi hai. Kuch samajh na aaye to us section ka naam leke poochh lena.
@@ -158,6 +160,9 @@ Kaali window / terminal mein **Ctrl + C**. **Browser band karne se app band nahi
 - Button: **15m / 30m / 1h / Poora din**. Mouse se zoom / scroll.
 - Mouse le jao to upar O/H/L/C aur MACD values dikhti hain.
 - Trade ke **entry (tir) aur exit (gola)** nishaan chart par.
+- Chart ke theek upar **Nifty level ki patti** hai: chart par **click** karke Nifty level / SL / target lagao aur
+  **line ko pakad kar (drag) upar-neeche khiskao** (neeche "Nifty level se trade" dekho).
+  **Dashed line** = save hua, **dotted line** = abhi save nahi hua.
 
 ### Trade control (daayein)
 1. **Kadam 1 - Expiry chuno.** Agli 4 expiry ke button dikhte hain (jaise "15 Sep · 2 din · Weekly",
@@ -172,6 +177,42 @@ Kaali window / terminal mein **Ctrl + C**. **Browser band karne se app band nahi
 4. **Laal message** aaye to padho - usme wajah likhi hoti hai (margin kam, market band, price nahi mile...).
 5. **Exit now** - khuli position turant band. **Kill switch** - position band + aaj ke liye naye trade band.
 6. Sabse upar **⛔ laal patti** aaye (order ka status pakka nahi hua) - Angel One app mein check karo, phir app restart karo.
+
+### Nifty level se trade (chart par click karke)
+Order lagane ka doosra tarika: **Nifty ka ek level** set karo - Nifty wahan aate hi trade apne aap lag jaata hai.
+
+Sab kuch **chart par** hota hai - chart ke theek upar ek patti hai (Entry / SL / Target, CALL/PUT, buttons).
+
+1. Daayein **Trade control** mein **expiry** aur **Buying/Selling** chuno - level order yahi use karta hai.
+2. Chart ki patti mein chuno level par kya trade lage: **"▲ CALL khareedo"** (market upar) ya
+   **"▼ PUT khareedo"** (market neeche). Selling chuna ho to **"PUT becho"** / **"CALL becho"**.
+3. **Chart par click karo:** pehla click = **Entry**, doosra = **SL**, teesra = **Target**. Patti ke
+   Entry / SL / Target button se bhi chun sakte ho ki click se kya lage. SL / target na chahiye to mat lagao.
+4. **Line ko pakad kar khiskao (drag & drop)** - mouse se, ya phone par ungli se. Bhaav right side par dikhta hai.
+   Theek bhaav likhna ho to patti ke **chip** (jaise "SL 24,720.00") par click karke likho, ya **✎ Likho**. **✕** se hatao.
+5. **"Level order lagao"** dabao aur pakka karo. Patti mein **"Waiting: ..."** aata hai, lines dashed ho jaati hain.
+6. Waiting order ki line bhi khiska sakte ho → **"Badlaav save karo"** (ya **Wapas**). Jab tak save nahi dabaoge,
+   asli order nahi badlega. **"Level order cancel"** se hatao. Level chhoone ke baad badlaav nahi ho sakta.
+
+| Baat | Kya hota hai |
+|---|---|
+| Level Nifty se **upar** lagaya | Nifty **chadh kar** level chhuye tab trade |
+| Level Nifty se **neeche** lagaya | Nifty **gir kar** level chhuye tab trade |
+| MACD | **Nahi dekha jaata** - level chhoote hi order |
+| Kitni jaldi | Har **1 second** Nifty check hota hai |
+| Nifty SL / target | Position par lag jaate hain: Nifty SL chhuye to exit, Nifty target chhuye to exit. **₹4,000 SL / ₹4,800 target (trailing) bhi chalu rehte hain - jo pehle lage** |
+| SL / target kis taraf | Market upar wale trade mein SL level se **neeche**, target **upar**. Market neeche wale mein ulta |
+| Kitne level order | **Ek samay ek.** Naya lagaoge to purana hat jaata hai. **Cancel** se hatao |
+| Kab tak valid | **Sirf aaj.** Square-off time (15:15) par apne aap cancel |
+| Position pehle se khuli | Level order lag hi nahi sakta. Level chhoote waqt koi position khuli ho to level order cancel |
+| Option price na mile | 60 sec tak koshish, phir cancel + laal message |
+| Din ki limit / kill switch | Level chhoone par bhi check hota hai - limit poori ho to trade nahi |
+| Restart / computer band | Level order aur Nifty SL / target database mein yaad rehte hain |
+| MACD wali pending request | Level order se trade laga to wo cancel ho jaati hai (warna position band hote hi khud lag jaati) |
+
+**Khuli position par Nifty SL / target (MACD wale trade par bhi):** position khulte hi chart ki patti SL / target ki ho jaati hai.
+Chart par click (pehla SL, doosra target) ya line khiskao → **"SL / target set karo"**. Baad mein bhi line khiska kar badal sakte ho.
+Hatana ho to **"SL / target hatao"** (ya chip ka ✕ → set karo). Trades table mein exit ki wajah "Nifty SL" / "Nifty target" dikhti hai.
 
 ### Position
 Live P&L, **SL se Target tak ki patti** (safed gola = abhi kahan ho), trailing ki jaankari, har leg ka Entry / LTP / P&L.
@@ -223,6 +264,8 @@ Dono legs ka **total P&L** dekha jaata hai (har 15 sec):
 | Situation | Kya hoga |
 |---|---|
 | Loss **₹4,000** | Stop-loss exit |
+| Nifty ne position ka **Nifty SL** chhua (lagaya ho to) | Exit - ye har **1 sec** check hota hai |
+| Nifty ne position ka **Nifty target** chhua (lagaya ho to) | Exit - seedha, trailing nahi |
 | Profit **₹4,800** (target) tak pahuncha | Trailing shuru - exit nahi |
 | Trailing ke baad sabse zyada profit se **₹1,000** gira | Exit (profit lock) |
 | **Exit now** / **Kill switch** | Exit |
@@ -317,6 +360,10 @@ Spelling galat ya galat value hui to app start **nahi** hogi aur check_config ba
 | `exit.exit_on_opposite_macd` | false | MACD ulta hone par exit |
 | `exit.broker_backup_sl` | true | Selling mein broker par SL |
 | `exit.broker_backup_sl_multiple` | 1.5 | Broker SL = SL × ye |
+| `level_order.enabled` | true | false = chart se level order nahi laga sakte |
+| `level_order.check_interval_sec` | 1 | Nifty level aur Nifty SL / target har itne sec check |
+| `level_order.min_gap_points` | 2 | Level abhi ke Nifty se, aur SL / target level se, kam se kam itne point door |
+| `level_order.entry_retry_sec` | 60 | Level chhoone ke baad itne sec tak order ki koshish, phir cancel |
 
 ---
 
@@ -390,6 +437,8 @@ Kuch bhi khula reh jaye to script bada warning deti hai - **Angel One app se khu
 | `GALTI config.yaml / strategies.yaml` | Setting galat | Batayi line theek karo |
 | Chart khaali | Market band / app abhi shuru hui | Market time mein data aayega |
 | CALL/PUT button dabte nahi | Expiry nahi chuni / position khuli hai / strategy band | Upar se expiry chuno (button par mouse le jao to wajah dikhti hai) |
+| Level order lagate waqt laal "Galti" | SL / target galat taraf, level Nifty ke bahut paas, expiry nahi chuni, ya position khuli | Message padho. Market upar wale trade mein SL level se neeche, target upar |
+| Level chhua par trade nahi laga | Option price nahi mile / din ki limit / margin kam | Laal message aur Logs dekho - level order cancel ho chuka hota hai, zaroorat ho to naya lagao |
 | Laal: "Expiry nahi chuni..." | Chuni expiry nikal gayi ya chuni hi nahi | Kadam 1 se expiry chuno - pending request aage badh jaayegi |
 | **Data ruka** (laal) | Angel One feed toota | App khud jodti hai. Baar-baar ho to internet jaancho |
 | Laal: "Market band hai - order nahi bheja" | 9:15 - 15:30 ke bahar | Sahi hai - market time mein dabao |

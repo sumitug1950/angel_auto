@@ -25,6 +25,8 @@ def run_lightweight_migrations() -> None:
         _ensure_column(conn, "positions", "strategy_name", f"VARCHAR(50) NOT NULL DEFAULT '{DEFAULT_STRATEGY_NAME}'")
         _ensure_column(conn, "positions", "charges_rs", "FLOAT DEFAULT 0.0")
         _ensure_column(conn, "positions", "net_pnl_rs", "FLOAT")
+        _ensure_column(conn, "positions", "spot_sl", "FLOAT")
+        _ensure_column(conn, "positions", "spot_target", "FLOAT")
         _ensure_column(conn, "daily_risk_state", "strategy_name", f"VARCHAR(50) NOT NULL DEFAULT '{DEFAULT_STRATEGY_NAME}'")
         # trade_date used to be globally UNIQUE (one row/day for the whole app); now it's one
         # row per (trade_date, strategy_name), so any old unique index on trade_date alone

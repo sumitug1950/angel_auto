@@ -1,7 +1,9 @@
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from angel_auto.core.app import FEED_STALE_SEC, TradingApp
+from angel_auto.core.enums import Direction, ExitReason, LevelOrderStatus, StructureType
 from angel_auto.persistence import journal
+from angel_auto.strategy.base import EntryIntent, ExitIntent
 
 
 class _Router:
@@ -104,3 +106,85 @@ def test_restart_rebuilds_todays_candles_from_the_tick_archive():
 
     assert app.bars.candle_count >= 35
     assert app.bars.last_candle().close == 24039.0  # options ticks don't leak into spot candles
+
+
+class _LevelStrategy:
+    def __init__(self, intent):
+        self.intent = intent
+        self.notices = []
+
+    def expire_stale_level_order(self):
+        pass
+
+    def on_spot_price(self, spot):
+        return self.intent
+
+    def record_entry_notice(self, message):
+        self.notices.append(message)
+
+    def cancel_pending_request(self):
+        return True
+
+
+class _EntryOms:
+    def __init__(self, position_id, notice=None):
+        self.position_id = position_id
+        self.last_notice = notice
+
+    def execute_entry(self, intent):
+        return self.position_id
+
+
+def _level_app(intent) -> TradingApp:
+    app = _app(1.0)
+    app._square_off_due = lambda now=None: False
+    app.strategy = _LevelStrategy(intent)
+    return app
+
+
+def _waiting_level_order() -> int:
+    return journal.create_level_order(date.today(), Direction.LONG, StructureType.DEBIT, "29SEP2026", 24850.0, "RISES_TO")
+
+
+def test_level_entry_marks_the_level_order_executed():
+    order_id = _waiting_level_order()
+    app = _level_app(EntryIntent(Direction.LONG, StructureType.DEBIT, "29SEP2026", level_order_id=order_id))
+    app.oms = _EntryOms(position_id=7)
+
+    app._run_level_cycle()
+
+    order = journal.get_level_order(order_id)
+    assert (order["status"], order["position_id"]) == (LevelOrderStatus.EXECUTED, 7)
+
+
+def test_failed_level_entry_marks_the_level_order_failed_with_the_reason():
+    order_id = _waiting_level_order()
+    app = _level_app(EntryIntent(Direction.LONG, StructureType.DEBIT, "29SEP2026", level_order_id=order_id))
+    app.oms = _EntryOms(position_id=None, notice="Margin kam hai")
+
+    app._run_level_cycle()
+
+    order = journal.get_level_order(order_id)
+    assert (order["status"], order["note"]) == (LevelOrderStatus.FAILED, "Margin kam hai")
+    assert app.strategy.notices == ["Margin kam hai"]
+
+
+def test_square_off_time_expires_a_waiting_level_order():
+    order_id = _waiting_level_order()
+    app = _level_app(intent=None)
+    app._square_off_due = lambda now=None: True
+
+    app._run_level_cycle()
+
+    assert journal.get_level_order(order_id)["status"] == LevelOrderStatus.EXPIRED
+
+
+def test_a_nifty_sl_exit_is_not_resent_every_second():
+    app = _level_app(ExitIntent(reason=ExitReason.SPOT_SL))
+    exits = []
+    app._dispatch_exit = lambda intent: exits.append(intent.reason)
+
+    app._run_level_cycle()
+    app._run_level_cycle()  # one second later - the first attempt may still be failing at the broker
+
+    assert exits == [ExitReason.SPOT_SL]

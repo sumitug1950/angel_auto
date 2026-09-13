@@ -106,4 +106,6 @@ def build_status_payload(trading_app) -> dict:
         },
         "expiry_choices": strategy.expiry_choices() if strategy is not None else [],
         "selected_expiry": strategy.selected_expiry() if strategy is not None else None,
+        "level_order": journal.get_active_level_order() if strategy is not None else None,
+        "level_order_enabled": strat_cfg.level_order.enabled,
     }

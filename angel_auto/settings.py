@@ -167,6 +167,15 @@ class MacdConfig(ConfigModel):
         return self
 
 
+class LevelOrderConfig(ConfigModel):
+    """Nifty-level orders placed from the dashboard chart (strategies.yaml `level_order:`)."""
+
+    enabled: bool = True
+    check_interval_sec: float = Field(1.0, gt=0)  # how often the level and any Nifty SL/target are checked
+    min_gap_points: float = Field(2.0, ge=0)  # level this far from spot at least; SL/target this far from the level
+    entry_retry_sec: float = Field(60.0, gt=0)  # after the level is hit, keep trying this long (e.g. no option quotes)
+
+
 class LegRulesConfig(ConfigModel):
     """Strike rules for one dashboard button (strategies.yaml `buying:` / `selling:`). The expiry
     is not a rule - it's picked on the dashboard (see StrategyConfig.expiry_choices)."""
@@ -221,6 +230,7 @@ class StrategyConfig(ConfigModel):
     iv_rank_lookback_days: int = Field(90, gt=0)  # IV Rank is recorded per trade for reference only
     sizing: SizingConfig = Field(default_factory=SizingConfig)
     exit: ExitConfig = Field(default_factory=ExitConfig)
+    level_order: LevelOrderConfig = Field(default_factory=LevelOrderConfig)
 
     @model_validator(mode="after")
     def _option_quotes_fit_one_feed_connection(self) -> StrategyConfig:
